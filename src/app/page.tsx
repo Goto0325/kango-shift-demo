@@ -94,13 +94,13 @@ export default function Home() {
           </div>
         )}
       </header>
-      <div className={`bg-white rounded-xl shadow-xl overflow-hidden border-2 ${viewMode === "plan" ? "border-blue-500" : "border-orange-500"}`}>
-        <div className="overflow-x-auto max-w-full">
-          <table className="w-full border-collapse">
+      <div className={`bg-white rounded-xl shadow-xl border-2 ${viewMode === "plan" ? "border-blue-500" : "border-orange-500"}`}>
+        <div className="overflow-auto max-w-full max-h-[75vh]">
+          <table className="w-full border-separate border-spacing-0">
             <thead>
               <tr className="text-white text-[10px] text-center font-bold">
-                {/* 職員名ヘッダー：z-30で最前面に固定 */}
-                <th className="p-3 sticky left-0 top-0 bg-slate-900 z-30 min-w-[110px] border-b border-r border-slate-700">職員名</th>
+                {/* 左上角：z-40で最前面 */}
+                <th className="p-3 sticky left-0 top-0 bg-slate-900 z-40 min-w-[110px] border-b border-r border-slate-700">職員名</th>
                 {days.map(d => {
                   const info = getDayInfo(d);
                   return (
@@ -110,9 +110,8 @@ export default function Home() {
                     </th>
                   );
                 })}
-                {/* 合計列ヘッダー */}
                 {shiftTypes.map(t => (
-                  <th key={t.key} className="p-1 sticky top-0 right-0 z-10 min-w-[35px] bg-slate-800 border-b border-l border-slate-700 text-white">{t.key}</th>
+                  <th key={t.key} className="p-1 sticky top-0 right-0 z-30 min-w-[35px] bg-slate-800 border-b border-l border-slate-700 text-white">{t.key}</th>
                 ))}
               </tr>
             </thead>
@@ -120,8 +119,8 @@ export default function Home() {
               {staffMembers.map(name => {
                 const isDisabled = currentUser !== null && currentUser !== name;
                 return (
-                  <tr key={name} className={`h-12 text-[11px] font-bold ${isDisabled ? "bg-slate-50" : "bg-white"}`}>
-                    {/* 職員名セル：sticky left-0 と 背景色指定が肝 */}
+                  <tr key={name} className="h-12 text-[11px] font-bold">
+                    {/* 職員名固定：z-20 */}
                     <td className={`p-2 sticky left-0 z-20 border-r border-b border-slate-200 flex items-center justify-between shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${isDisabled ? "bg-slate-100 text-slate-400" : "bg-white text-slate-800"}`}>
                       <button onClick={() => !isDisabled && removeStaff(name)} className={`text-red-400 ${isDisabled ? "invisible" : "hover:text-red-600"}`}>✕</button>
                       <span className="truncate ml-1">{name}</span>
@@ -136,7 +135,7 @@ export default function Home() {
                             value={currentData[getShiftKey(name, d)] || ""} 
                             disabled={isDisabled}
                             onChange={(e) => saveShift(name, d, e.target.value, viewMode, currentUser !== null)} 
-                            className={`w-full text-center h-10 bg-transparent outline-none appearance-none cursor-pointer ${isDisabled ? "text-slate-400" : "text-slate-900"}`}
+                            className="w-full text-center h-10 bg-transparent outline-none appearance-none cursor-pointer"
                           >
                             <option value="">-</option>
                             {shiftTypes.map(t => <option key={t.key} value={t.key}>{t.key}</option>)}
@@ -145,9 +144,8 @@ export default function Home() {
                       );
                     })}
 
-                    {/* 右側の合計カウント列（ここが消えていた部分） */}
                     {shiftTypes.map(t => (
-                      <td key={t.key} className={`text-center border-b border-l border-slate-200 font-bold bg-slate-50 ${t.color}`}>
+                      <td key={t.key} className={`text-center border-b border-l border-slate-200 font-bold bg-slate-50 sticky right-0 z-10 ${t.color}`}>
                         {days.filter(d => currentData[getShiftKey(name, d)] === t.key).length}
                       </td>
                     ))}
@@ -155,12 +153,12 @@ export default function Home() {
                 );
               })}
             </tbody>
-            {/* 下部の合計行（ここも復活） */}
-            <tfoot>
+            {/* 合計行：z-indexを上げて中身を確実に表示 */}
+            <tfoot className="sticky bottom-0 z-30">
               <tr className="bg-slate-900 text-white text-[10px] font-bold">
-                <td className="p-2 sticky left-0 bg-slate-900 z-20 border-r border-slate-700">合計</td>
+                <td className="p-2 sticky left-0 bg-slate-900 z-40 border-r border-slate-700">合計</td>
                 {days.map(d => (
-                  <td key={d} className="p-1 text-center border-r border-slate-700">
+                  <td key={d} className="p-1 text-center border-r border-b border-slate-700 bg-slate-900">
                     {shiftTypes.map(t => {
                       const count = staffMembers.filter(name => currentData[getShiftKey(name, d)] === t.key).length;
                       return count > 0 ? (
@@ -169,7 +167,9 @@ export default function Home() {
                     })}
                   </td>
                 ))}
-                <td colSpan={shiftTypes.length} className="bg-slate-800 border-l border-slate-700"></td>
+                {shiftTypes.map(t => (
+                  <td key={t.key} className="bg-slate-800 border-l border-b border-slate-700 sticky right-0"></td>
+                ))}
               </tr>
             </tfoot>
           </table>
