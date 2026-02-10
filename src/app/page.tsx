@@ -95,23 +95,24 @@ export default function Home() {
         )}
       </header>
       <div className={`bg-white rounded-xl shadow-xl overflow-hidden border-2 ${viewMode === "plan" ? "border-blue-500" : "border-orange-500"}`}>
-        <div className="overflow-x-auto overflow-y-auto max-h-[70vh]"> {/* 縦スクロールも考慮 */}
-          <table className="w-full border-separate border-spacing-0"> {/* border-collapseから変更すると固定が安定します */}
+        <div className="overflow-x-auto max-w-full">
+          <table className="w-full border-collapse">
             <thead>
               <tr className="text-white text-[10px] text-center font-bold">
-                {/* 職員名のヘッダー固定 */}
+                {/* 職員名ヘッダー：z-30で最前面に固定 */}
                 <th className="p-3 sticky left-0 top-0 bg-slate-900 z-30 min-w-[110px] border-b border-r border-slate-700">職員名</th>
                 {days.map(d => {
                   const info = getDayInfo(d);
                   return (
-                    <th key={d} className={`p-1 sticky top-0 z-10 min-w-[38px] border-b border-r border-slate-700 ${info.headerColor}`}>
+                    <th key={d} className={`p-1 sticky top-0 z-10 min-w-[40px] border-b border-r border-slate-700 ${info.headerColor}`}>
                       <div className="text-[8px] opacity-90">{info.label}</div>
                       <div>{d}</div>
                     </th>
                   );
                 })}
+                {/* 合計列ヘッダー */}
                 {shiftTypes.map(t => (
-                  <th key={t.key} className="p-1 sticky top-0 z-10 min-w-[32px] bg-slate-900 border-b border-r border-slate-800 text-white">{t.key}</th>
+                  <th key={t.key} className="p-1 sticky top-0 right-0 z-10 min-w-[35px] bg-slate-800 border-b border-l border-slate-700 text-white">{t.key}</th>
                 ))}
               </tr>
             </thead>
@@ -119,22 +120,23 @@ export default function Home() {
               {staffMembers.map(name => {
                 const isDisabled = currentUser !== null && currentUser !== name;
                 return (
-                  <tr key={name} className={`hover:bg-slate-50 h-10 text-[11px] font-bold ${isDisabled ? "opacity-40 bg-slate-100" : ""}`}>
-                    {/* 職員名セルの固定を強化：bg-whiteを強制し、z-indexを20に設定 */}
-                    <td className="p-2 sticky left-0 bg-white border-r border-b border-slate-200 z-20 flex items-center justify-between shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                  <tr key={name} className={`h-12 text-[11px] font-bold ${isDisabled ? "bg-slate-50" : "bg-white"}`}>
+                    {/* 職員名セル：sticky left-0 と 背景色指定が肝 */}
+                    <td className={`p-2 sticky left-0 z-20 border-r border-b border-slate-200 flex items-center justify-between shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${isDisabled ? "bg-slate-100 text-slate-400" : "bg-white text-slate-800"}`}>
                       <button onClick={() => !isDisabled && removeStaff(name)} className={`text-red-400 ${isDisabled ? "invisible" : "hover:text-red-600"}`}>✕</button>
                       <span className="truncate ml-1">{name}</span>
                     </td>
+                    
                     {days.map(d => {
                       const info = getDayInfo(d);
                       const isHope = currentData[getHopeKey(name, d)] === "true";
                       return (
-                        <td key={d} className={`border-r border-b border-slate-100 ${info.bgColor} ${isHope && viewMode === "plan" ? "!bg-yellow-200" : ""}`}>
+                        <td key={d} className={`border-r border-b border-slate-100 text-center ${info.bgColor} ${isHope && viewMode === "plan" ? "!bg-yellow-200" : ""}`}>
                           <select 
                             value={currentData[getShiftKey(name, d)] || ""} 
                             disabled={isDisabled}
                             onChange={(e) => saveShift(name, d, e.target.value, viewMode, currentUser !== null)} 
-                            className="w-full text-center h-10 outline-none appearance-none bg-transparent cursor-pointer font-bold"
+                            className={`w-full text-center h-10 bg-transparent outline-none appearance-none cursor-pointer ${isDisabled ? "text-slate-400" : "text-slate-900"}`}
                           >
                             <option value="">-</option>
                             {shiftTypes.map(t => <option key={t.key} value={t.key}>{t.key}</option>)}
@@ -142,9 +144,10 @@ export default function Home() {
                         </td>
                       );
                     })}
-                    {/* 合計カウント列 */}
+
+                    {/* 右側の合計カウント列（ここが消えていた部分） */}
                     {shiftTypes.map(t => (
-                      <td key={t.key} className={`bg-slate-50 text-center border-r border-b border-slate-200 ${t.color}`}>
+                      <td key={t.key} className={`text-center border-b border-l border-slate-200 font-bold bg-slate-50 ${t.color}`}>
                         {days.filter(d => currentData[getShiftKey(name, d)] === t.key).length}
                       </td>
                     ))}
@@ -152,7 +155,23 @@ export default function Home() {
                 );
               })}
             </tbody>
-            {/* ...tfoot部分は同様にsticky left-0をtdに適用... */}
+            {/* 下部の合計行（ここも復活） */}
+            <tfoot>
+              <tr className="bg-slate-900 text-white text-[10px] font-bold">
+                <td className="p-2 sticky left-0 bg-slate-900 z-20 border-r border-slate-700">合計</td>
+                {days.map(d => (
+                  <td key={d} className="p-1 text-center border-r border-slate-700">
+                    {shiftTypes.map(t => {
+                      const count = staffMembers.filter(name => currentData[getShiftKey(name, d)] === t.key).length;
+                      return count > 0 ? (
+                        <div key={t.key} className={t.color}>{t.key}:{count}</div>
+                      ) : null;
+                    })}
+                  </td>
+                ))}
+                <td colSpan={shiftTypes.length} className="bg-slate-800 border-l border-slate-700"></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
