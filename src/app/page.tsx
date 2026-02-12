@@ -95,9 +95,11 @@ export default function Home() {
         )}
       </header>
       <div className="w-screen overflow-hidden px-1">
-        <div className="overflow-auto border rounded-lg shadow-sm max-h-[75vh]">
+  {/* max-h-[75vh] を [70vh] に少し縮め、確実に画面内に収まるようにします */}
+        <div className="overflow-auto border rounded-lg shadow-sm max-h-[70vh] sm:max-h-[75vh]">
           <table className="border-separate border-spacing-0">
             <thead>
+              {/* ...theadの中身はそのまま... */}
               <tr className="text-white text-[10px] text-center font-bold">
                 <th className="sticky left-0 top-0 z-50 bg-slate-900 p-3 min-w-[110px] border-b border-r border-slate-700">職員名</th>
                 {days.map(d => {
@@ -115,16 +117,15 @@ export default function Home() {
               </tr>
             </thead>
             <tbody>
+              {/* ...tbodyの中身（staffMembers.map）はそのまま... */}
               {staffMembers.map(name => {
                 const isDisabled = currentUser !== null && currentUser !== name;
                 return (
                   <tr key={name} className="h-12 text-[11px] font-bold">
-                    {/* 職員名固定 */}
                     <td className={`sticky left-0 z-40 p-2 border-b border-r border-slate-200 flex items-center justify-between !bg-white ${isDisabled ? "text-slate-400" : "text-slate-800"}`}>
                       <button onClick={() => !isDisabled && removeStaff(name)} className={`text-red-400 ${isDisabled ? "invisible" : ""}`}>✕</button>
                       <span className="truncate ml-1">{name}</span>
                     </td>
-                    
                     {days.map(d => {
                       const info = getDayInfo(d);
                       const isHope = currentData[getHopeKey(name, d)] === "true";
@@ -142,8 +143,6 @@ export default function Home() {
                         </td>
                       );
                     })}
-
-                    {/* 右側合計列 */}
                     {shiftTypes.map(t => (
                       <td key={t.key} className={`border-b border-r border-slate-200 text-center bg-slate-50 ${t.color}`}>
                         {days.filter(d => currentData[getShiftKey(name, d)] === t.key).length}
@@ -153,12 +152,13 @@ export default function Home() {
                 );
               })}
             </tbody>
-            {/* 復活：下の合計行 */}
+            {/* 合計行の固定設定を強化 */}
             <tfoot className="sticky bottom-0 z-50">
               <tr className="bg-slate-900 text-white text-[9px] font-bold">
-                <td className="sticky left-0 z-50 bg-slate-900 p-2 border-r border-slate-700 text-center">合計</td>
+                {/* !bg-slate-900 を追加して背景を確実に不透明に */}
+                <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center">合計</td>
                 {days.map(d => (
-                  <td key={d} className="p-1 text-center border-r border-slate-700 bg-slate-900 min-w-[40px]">
+                  <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[40px]">
                     {shiftTypes.map(t => {
                       const count = staffMembers.filter(name => currentData[getShiftKey(name, d)] === t.key).length;
                       return count > 0 ? (
@@ -167,9 +167,9 @@ export default function Home() {
                     })}
                   </td>
                 ))}
-                {/* 右下の合計列の下部分を埋める */}
+                {/* 右側の余白部分 */}
                 {shiftTypes.map(t => (
-                  <td key={t.key} className="bg-slate-800 border-r border-slate-700"></td>
+                  <td key={t.key} className="!bg-slate-900 border-r border-slate-700"></td>
                 ))}
               </tr>
             </tfoot>
