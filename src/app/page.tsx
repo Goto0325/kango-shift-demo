@@ -45,7 +45,7 @@ export default function Home() {
     };
   };
 
-  return (
+return (
     <div className="h-screen w-screen bg-slate-50 flex flex-col overflow-hidden text-black font-sans">
       {/* 1. ヘッダー部分（固定） */}
       <div className="flex-none p-4 md:p-8 pb-2">
@@ -177,3 +177,4 @@ export default function Home() {
       </div>
     </div>
   );
+}
