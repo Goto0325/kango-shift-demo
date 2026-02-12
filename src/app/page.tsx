@@ -46,78 +46,80 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8 text-black font-sans">
-      {currentUser && (
-        <div className="bg-yellow-100 p-3 mb-4 rounded-lg border border-yellow-300 text-center font-bold text-yellow-800 shadow-sm flex justify-center items-center gap-4">
-          <span>📱 {currentUser} さんの希望入力画面</span>
-          <button onClick={() => window.location.href = window.location.pathname} className="text-xs bg-white px-2 py-1 rounded shadow-sm border border-yellow-400">管理者に戻る</button>
-        </div>
-      )}
-
-      <header className="mb-6 flex flex-col gap-4">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-blue-900 tracking-tighter">勤務表システム</h1>
-            {!currentUser && (
-              <button onClick={() => resetMonth(viewMode, daysInMonth)} className="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded border border-red-200">全リセット</button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setViewMode("plan")} className={`px-4 py-2 rounded-lg text-sm font-bold transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow" : "bg-white border"}`}>予定</button>
-            {!currentUser && (
-              <button onClick={() => setViewMode("actual")} className={`px-4 py-2 rounded-lg text-sm font-bold transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow" : "bg-white border"}`}>実績</button>
-            )}
-          </div>
-        </div>
-
-        {!currentUser && (
-          <div className="flex flex-wrap justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-slate-200 gap-4">
-            <div className="flex gap-2 items-center">
-              <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="font-bold border rounded p-1 bg-slate-50">
-                {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
-              </select>
-              {viewMode === "plan" && (
-                <>
-                  <button onClick={() => autoGenerate(daysInMonth)} className="bg-blue-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm hover:bg-blue-600">自動作成</button>
-                  <button onClick={copyToActual} className="bg-green-600 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm hover:bg-green-700">実績へ反映</button>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-slate-400">デモURL:</span>
-              <div className="flex gap-1">
-                {staffMembers.map(name => (
-                  <a key={name} href={`?user=${name}`} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-100 transition hover:bg-blue-100">{name}</a>
-                ))}
-              </div>
-            </div>
+    <div className="h-screen w-screen bg-slate-50 flex flex-col overflow-hidden text-black font-sans">
+      {/* 1. ヘッダー部分（固定） */}
+      <div className="flex-none p-4 md:p-8 pb-2">
+        {currentUser && (
+          <div className="bg-yellow-100 p-3 mb-4 rounded-lg border border-yellow-300 text-center font-bold text-yellow-800 shadow-sm flex justify-center items-center gap-4">
+            <span>📱 {currentUser} さんの希望入力画面</span>
+            <button onClick={() => window.location.href = window.location.pathname} className="text-xs bg-white px-2 py-1 rounded shadow-sm border border-yellow-400">管理者に戻る</button>
           </div>
         )}
-      </header>
-      <div className="w-screen overflow-hidden px-1">
-  {/* max-h-[75vh] を [70vh] に少し縮め、確実に画面内に収まるようにします */}
-        <div className="overflow-auto border rounded-lg shadow-sm max-h-[70vh] sm:max-h-[75vh]">
-          <table className="border-separate border-spacing-0">
-            <thead>
-              {/* ...theadの中身はそのまま... */}
+
+        <header className="mb-4 flex flex-col gap-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-blue-900 tracking-tighter">勤務表システム</h1>
+              {!currentUser && (
+                <button onClick={() => resetMonth(viewMode, daysInMonth)} className="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded border border-red-200">全リセット</button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setViewMode("plan")} className={`px-4 py-2 rounded-lg text-sm font-bold transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow" : "bg-white border"}`}>予定</button>
+              {!currentUser && (
+                <button onClick={() => setViewMode("actual")} className={`px-4 py-2 rounded-lg text-sm font-bold transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow" : "bg-white border"}`}>実績</button>
+              )}
+            </div>
+          </div>
+
+          {!currentUser && (
+            <div className="flex flex-wrap justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-slate-200 gap-4">
+              <div className="flex gap-2 items-center">
+                <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="font-bold border rounded p-1 bg-slate-50">
+                  {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
+                </select>
+                {viewMode === "plan" && (
+                  <>
+                    <button onClick={() => autoGenerate(daysInMonth)} className="bg-blue-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm hover:bg-blue-600">自動作成</button>
+                    <button onClick={copyToActual} className="bg-green-600 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm hover:bg-green-700">実績へ反映</button>
+                  </>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-slate-400">デモURL:</span>
+                <div className="flex gap-1 overflow-x-auto max-w-[200px] whitespace-nowrap">
+                  {staffMembers.map(name => (
+                    <a key={name} href={`?user=${name}`} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-100 transition hover:bg-blue-100">{name}</a>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </header>
+      </div>
+
+      {/* 2. テーブル部分（ここがスクロールの主役） */}
+      <div className="flex-1 overflow-hidden px-4 pb-4">
+        <div className="h-full w-full overflow-auto border rounded-lg shadow-sm bg-white relative">
+          <table className="border-separate border-spacing-0 min-w-full">
+            <thead className="sticky top-0 z-50">
               <tr className="text-white text-[10px] text-center font-bold">
                 <th className="sticky left-0 top-0 z-50 bg-slate-900 p-3 min-w-[110px] border-b border-r border-slate-700">職員名</th>
                 {days.map(d => {
                   const info = getDayInfo(d);
                   return (
-                    <th key={d} className={`p-1 sticky top-0 z-10 min-w-[40px] border-b border-r border-slate-700 ${info.headerColor}`}>
+                    <th key={d} className={`p-1 min-w-[40px] border-b border-r border-slate-700 ${info.headerColor}`}>
                       <div className="text-[8px] opacity-90">{info.label}</div>
                       <div>{d}</div>
                     </th>
                   );
                 })}
                 {shiftTypes.map(t => (
-                  <th key={t.key} className="p-1 sticky top-0 z-10 min-w-[35px] bg-slate-900 border-b border-r border-slate-700 text-[8px]">{t.key}</th>
+                  <th key={t.key} className="p-1 min-w-[35px] bg-slate-900 border-b border-r border-slate-700 text-[8px]">{t.key}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {/* ...tbodyの中身（staffMembers.map）はそのまま... */}
               {staffMembers.map(name => {
                 const isDisabled = currentUser !== null && currentUser !== name;
                 return (
@@ -152,10 +154,8 @@ export default function Home() {
                 );
               })}
             </tbody>
-            {/* 合計行の固定設定を強化 */}
             <tfoot className="sticky bottom-0 z-50">
               <tr className="bg-slate-900 text-white text-[9px] font-bold">
-                {/* !bg-slate-900 を追加して背景を確実に不透明に */}
                 <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center">合計</td>
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[40px]">
@@ -167,7 +167,6 @@ export default function Home() {
                     })}
                   </td>
                 ))}
-                {/* 右側の余白部分 */}
                 {shiftTypes.map(t => (
                   <td key={t.key} className="!bg-slate-900 border-r border-slate-700"></td>
                 ))}
@@ -178,4 +177,3 @@ export default function Home() {
       </div>
     </div>
   );
-}
