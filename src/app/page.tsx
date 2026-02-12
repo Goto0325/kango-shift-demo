@@ -150,9 +150,11 @@ export default function Home() {
                   </tr>
                 );
               })}
-              {/* 合計行を tbody 内に配置することで、データのすぐ下に表示させる */}
-              <tr className="sticky bottom-0 z-50 bg-slate-900 text-white text-[9px] font-bold h-10 shadow-[0_-2px_10px_rgba(0,0,0,0.2)]">
-                <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center uppercase tracking-widest">Total</td>
+            </tbody>
+            {/* 修正：独立した tfoot を使い、bottom-0 で固定 */}
+            <tfoot className="sticky -bottom-[1px] z-50">
+              <tr className="bg-slate-900 text-white text-[9px] font-bold h-11">
+                <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center uppercase tracking-widest shadow-[2px_0_5px_rgba(0,0,0,0.3)]">Total</td>
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900">
                     <div className="flex flex-col gap-0.5 leading-none">
@@ -163,9 +165,12 @@ export default function Home() {
                     </div>
                   </td>
                 ))}
-                <td colSpan={6} className="!bg-slate-900"></td>
+                {/* 右側の集計列の下を埋める */}
+                {shiftTypes.map(t => (
+                  <td key={t.key} className="!bg-slate-900 border-r border-slate-700"></td>
+                ))}
               </tr>
-            </tbody>
+            </tfoot>
           </table>
         </div>
       </div>
