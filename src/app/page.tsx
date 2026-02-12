@@ -163,21 +163,33 @@ export default function Home() {
             </tbody>
             {/* 修正：独立した tfoot を使い、bottom-0 で固定 */}
             <tfoot className="sticky -bottom-[1px] z-50">
-              <tr className="bg-slate-900 text-white text-[9px] font-bold h-11">
-                <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center uppercase tracking-widest shadow-[2px_0_5px_rgba(0,0,0,0.3)]">Total</td>
+              <tr className="bg-slate-900 text-white font-bold h-14 shadow-[0_-4px_10px_rgba(0,0,0,0.3)]">
+                <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center text-xs uppercase tracking-tighter">
+                  合計
+                </td>
                 {days.map(d => (
-                  <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900">
-                    <div className="flex flex-col gap-0.5 leading-none">
-                      {shiftTypes.slice(0, 4).map(t => {
+                  <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
+                    {/* 文字を大きく(text-[11px])、行間を詰めて読みやすくしました */}
+                    <div className="flex flex-col justify-center items-center h-full gap-0">
+                      {[
+                        { key: "日", color: "text-white" },
+                        { key: "早", color: "text-orange-400" },
+                        { key: "遅", color: "text-purple-400" },
+                        { key: "夜", color: "text-blue-400" }
+                      ].map(t => {
                         const count = staffMembers.filter(n => currentData[getShiftKey(n, d)] === t.key).length;
-                        return count > 0 ? <span key={t.key} className={t.color}>{t.key}:{count}</span> : null;
+                        return count > 0 ? (
+                          <span key={t.key} className={`${t.color} text-[11px] leading-tight flex items-center gap-0.5`}>
+                            {t.key}<span className="text-[10px]">:</span>{count}
+                          </span>
+                        ) : null;
                       })}
                     </div>
                   </td>
                 ))}
-                {/* 右側の集計列の下を埋める */}
+                {/* 右端の集計列の下を埋める */}
                 {shiftTypes.map(t => (
-                  <td key={t.key} className="!bg-slate-900 border-r border-slate-700"></td>
+                  <td key={t.key} className="!bg-slate-900 border-slate-700"></td>
                 ))}
               </tr>
             </tfoot>
