@@ -45,10 +45,12 @@ export default function Home() {
     };
   };
 
-return (
+  return (
+    // 1. 画面全体のスクロールを禁止し、高さを固定します
     <div className="h-screen w-screen bg-slate-50 flex flex-col overflow-hidden text-black font-sans">
-      {/* 1. ヘッダー部分（固定） */}
-      <div className="flex-none p-4 md:p-8 pb-2">
+      
+      {/* 2. ヘッダー（高さ固定） */}
+      <div className="flex-none p-4 md:p-6 pb-2">
         {currentUser && (
           <div className="bg-yellow-100 p-3 mb-4 rounded-lg border border-yellow-300 text-center font-bold text-yellow-800 shadow-sm flex justify-center items-center gap-4">
             <span>📱 {currentUser} さんの希望入力画面</span>
@@ -56,7 +58,7 @@ return (
           </div>
         )}
 
-        <header className="mb-4 flex flex-col gap-4">
+        <header className="flex flex-col gap-3">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-blue-900 tracking-tighter">勤務表システム</h1>
@@ -73,35 +75,33 @@ return (
           </div>
 
           {!currentUser && (
-            <div className="flex flex-wrap justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-slate-200 gap-4">
-              <div className="flex gap-2 items-center">
+            <div className="flex flex-wrap justify-between items-center bg-white p-2 rounded-xl shadow-sm border border-slate-200 gap-2">
+              <div className="flex gap-2 items-center text-sm">
                 <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="font-bold border rounded p-1 bg-slate-50">
                   {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
                 </select>
                 {viewMode === "plan" && (
                   <>
-                    <button onClick={() => autoGenerate(daysInMonth)} className="bg-blue-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm hover:bg-blue-600">自動作成</button>
-                    <button onClick={copyToActual} className="bg-green-600 text-white px-3 py-1.5 rounded text-xs font-bold shadow-sm hover:bg-green-700">実績へ反映</button>
+                    <button onClick={() => autoGenerate(daysInMonth)} className="bg-blue-500 text-white px-3 py-1 rounded text-xs font-bold shadow-sm hover:bg-blue-600">自動作成</button>
+                    <button onClick={copyToActual} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold shadow-sm hover:bg-green-700">実績反映</button>
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-slate-400">デモURL:</span>
-                <div className="flex gap-1 overflow-x-auto max-w-[200px] whitespace-nowrap">
-                  {staffMembers.map(name => (
-                    <a key={name} href={`?user=${name}`} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-100 transition hover:bg-blue-100">{name}</a>
-                  ))}
-                </div>
+              <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap max-w-full pb-1">
+                <span className="text-[10px] font-bold text-slate-400 shrink-0">デモURL:</span>
+                {staffMembers.map(name => (
+                  <a key={name} href={`?user=${name}`} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-100 transition hover:bg-blue-100">{name}</a>
+                ))}
               </div>
             </div>
           )}
         </header>
       </div>
 
-      {/* 2. テーブル部分（ここがスクロールの主役） */}
+      {/* 3. テーブルエリア（ここが「画面の残り半分」を埋めてスクロールします） */}
       <div className="flex-1 overflow-hidden px-4 pb-4">
-        <div className="h-full w-full overflow-auto border rounded-lg shadow-sm bg-white relative">
-          <table className="border-separate border-spacing-0 min-w-full">
+        <div className="h-full w-full overflow-auto border rounded-lg shadow-sm bg-white border-separate">
+          <table className="border-separate border-spacing-0 min-w-full bg-white">
             <thead className="sticky top-0 z-50">
               <tr className="text-white text-[10px] text-center font-bold">
                 <th className="sticky left-0 top-0 z-50 bg-slate-900 p-3 min-w-[110px] border-b border-r border-slate-700">職員名</th>
@@ -137,7 +137,7 @@ return (
                             value={currentData[getShiftKey(name, d)] || ""} 
                             disabled={isDisabled}
                             onChange={(e) => saveShift(name, d, e.target.value, viewMode, currentUser !== null)} 
-                            className="w-full text-center h-10 bg-transparent outline-none appearance-none"
+                            className="w-full text-center h-10 bg-transparent outline-none appearance-none cursor-pointer"
                           >
                             <option value="">-</option>
                             {shiftTypes.map(t => <option key={t.key} value={t.key}>{t.key}</option>)}
@@ -154,13 +154,14 @@ return (
                 );
               })}
             </tbody>
+            {/* 合計行を確実に固定 */}
             <tfoot className="sticky bottom-0 z-50">
               <tr className="bg-slate-900 text-white text-[9px] font-bold">
                 <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center">合計</td>
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[40px]">
                     {shiftTypes.map(t => {
-                      const count = staffMembers.filter(name => currentData[getShiftKey(name, d)] === t.key).length;
+                      const count = staffMembers.filter(n => currentData[getShiftKey(n, d)] === t.key).length;
                       return count > 0 ? (
                         <div key={t.key} className={t.color}>{t.key}:{count}</div>
                       ) : null;
