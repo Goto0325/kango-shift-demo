@@ -95,17 +95,22 @@ export default function Home() {
         )}
       </header>
       <div className="w-screen overflow-hidden px-1">
-        
         <div className="overflow-auto border rounded-lg shadow-sm max-h-[75vh]">
           <table className="border-separate border-spacing-0">
             <thead>
-              <tr className="bg-slate-900 text-white text-[10px]">
-                <th className="sticky left-0 top-0 z-50 bg-slate-900 p-3 min-w-[100px] border-b border-r border-slate-700">職員名</th>
-                {days.map(d => (
-                  <th key={d} className="p-2 sticky top-0 z-10 border-b border-r border-slate-700 min-w-[40px] bg-slate-800 text-center">{d}</th>
-                ))}
+              <tr className="text-white text-[10px] text-center font-bold">
+                <th className="sticky left-0 top-0 z-50 bg-slate-900 p-3 min-w-[110px] border-b border-r border-slate-700">職員名</th>
+                {days.map(d => {
+                  const info = getDayInfo(d);
+                  return (
+                    <th key={d} className={`p-1 sticky top-0 z-10 min-w-[40px] border-b border-r border-slate-700 ${info.headerColor}`}>
+                      <div className="text-[8px] opacity-90">{info.label}</div>
+                      <div>{d}</div>
+                    </th>
+                  );
+                })}
                 {shiftTypes.map(t => (
-                  <th key={t.key} className="p-1 sticky top-0 z-10 min-w-[32px] bg-slate-900 border-b border-r border-slate-700 text-[8px]">{t.key}</th>
+                  <th key={t.key} className="p-1 sticky top-0 z-10 min-w-[35px] bg-slate-900 border-b border-r border-slate-700 text-[8px]">{t.key}</th>
                 ))}
               </tr>
             </thead>
@@ -113,26 +118,34 @@ export default function Home() {
               {staffMembers.map(name => {
                 const isDisabled = currentUser !== null && currentUser !== name;
                 return (
-                  <tr key={name} className="h-12 text-[11px]">
-                    <td className={`sticky left-0 z-40 p-2 border-b border-r border-slate-200 font-bold ${isDisabled ? "bg-slate-100 text-slate-400" : "bg-white text-slate-800"}`}>
-                      {name}
+                  <tr key={name} className="h-12 text-[11px] font-bold">
+                    {/* 職員名固定 */}
+                    <td className={`sticky left-0 z-40 p-2 border-b border-r border-slate-200 flex items-center justify-between !bg-white ${isDisabled ? "text-slate-400" : "text-slate-800"}`}>
+                      <button onClick={() => !isDisabled && removeStaff(name)} className={`text-red-400 ${isDisabled ? "invisible" : ""}`}>✕</button>
+                      <span className="truncate ml-1">{name}</span>
                     </td>
-                    {days.map(d => (
-                      <td key={d} className="border-b border-r border-slate-100 p-0 text-center">
-                        <select 
-                          value={currentData[getShiftKey(name, d)] || ""} 
-                          disabled={isDisabled}
-                          onChange={(e) => saveShift(name, d, e.target.value, viewMode, currentUser !== null)}
-                          className="w-full h-10 bg-transparent text-center outline-none appearance-none"
-                        >
-                          <option value="">-</option>
-                          {shiftTypes.map(t => <option key={t.key} value={t.key}>{t.key}</option>)}
-                        </select>
-                      </td>
-                    ))}
-                    {/* 右側の合計列を復活 */}
+                    
+                    {days.map(d => {
+                      const info = getDayInfo(d);
+                      const isHope = currentData[getHopeKey(name, d)] === "true";
+                      return (
+                        <td key={d} className={`border-r border-b border-slate-100 text-center ${info.bgColor} ${isHope && viewMode === "plan" ? "!bg-yellow-200" : ""}`}>
+                          <select 
+                            value={currentData[getShiftKey(name, d)] || ""} 
+                            disabled={isDisabled}
+                            onChange={(e) => saveShift(name, d, e.target.value, viewMode, currentUser !== null)} 
+                            className="w-full text-center h-10 bg-transparent outline-none appearance-none"
+                          >
+                            <option value="">-</option>
+                            {shiftTypes.map(t => <option key={t.key} value={t.key}>{t.key}</option>)}
+                          </select>
+                        </td>
+                      );
+                    })}
+
+                    {/* 右側合計列 */}
                     {shiftTypes.map(t => (
-                      <td key={t.key} className={`border-b border-r border-slate-200 text-center font-bold bg-slate-50 text-[10px] ${t.color}`}>
+                      <td key={t.key} className={`border-b border-r border-slate-200 text-center bg-slate-50 ${t.color}`}>
                         {days.filter(d => currentData[getShiftKey(name, d)] === t.key).length}
                       </td>
                     ))}
@@ -140,19 +153,24 @@ export default function Home() {
                 );
               })}
             </tbody>
-            {/* 合計行 */}
-            <tfoot className="sticky bottom-0 z-30 bg-slate-900 text-white text-[9px]">
-              <tr>
-                <td className="sticky left-0 z-50 bg-slate-900 p-2 border-r border-slate-700 font-bold text-center">合計</td>
+            {/* 復活：下の合計行 */}
+            <tfoot className="sticky bottom-0 z-50">
+              <tr className="bg-slate-900 text-white text-[9px] font-bold">
+                <td className="sticky left-0 z-50 bg-slate-900 p-2 border-r border-slate-700 text-center">合計</td>
                 {days.map(d => (
-                  <td key={d} className="p-1 text-center border-r border-slate-700">
+                  <td key={d} className="p-1 text-center border-r border-slate-700 bg-slate-900 min-w-[40px]">
                     {shiftTypes.map(t => {
-                      const count = staffMembers.filter(n => currentData[getShiftKey(n, d)] === t.key).length;
-                      return count > 0 ? <div key={t.key} className={t.color}>{t.key}:{count}</div> : null;
+                      const count = staffMembers.filter(name => currentData[getShiftKey(name, d)] === t.key).length;
+                      return count > 0 ? (
+                        <div key={t.key} className={t.color}>{t.key}:{count}</div>
+                      ) : null;
                     })}
                   </td>
                 ))}
-                <td colSpan={shiftTypes.length} className="bg-slate-800 border-l border-slate-700"></td>
+                {/* 右下の合計列の下部分を埋める */}
+                {shiftTypes.map(t => (
+                  <td key={t.key} className="bg-slate-800 border-r border-slate-700"></td>
+                ))}
               </tr>
             </tfoot>
           </table>
