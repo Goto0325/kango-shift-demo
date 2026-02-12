@@ -100,22 +100,32 @@ export default function Home() {
       <div className="flex-1 overflow-hidden px-2 md:px-6 pb-4">
         <div className="h-full w-full overflow-auto border rounded-xl shadow-2xl bg-white border-separate">
           <table className="border-separate border-spacing-0 min-w-full">
-            <thead className="sticky top-0 z-50">
-              <tr className="text-white text-[10px] text-center font-bold">
-                <th className="sticky left-0 top-0 z-50 bg-slate-900 p-3 min-w-[100px] border-b border-r border-slate-700">職員名</th>
-                {days.map(d => {
-                  const info = getDayInfo(d);
-                  return (
-                    <th key={d} className={`p-1 min-w-[38px] border-b border-r border-slate-700 ${info.headerColor}`}>
-                      <div>{d}</div>
-                    </th>
-                  );
-                })}
-                {shiftTypes.map(t => (
-                  <th key={t.key} className="p-1 min-w-[32px] bg-slate-900 border-b border-slate-700 text-[8px]">{t.key}</th>
-                ))}
-              </tr>
-            </thead>
+          <thead className="sticky top-0 z-50">
+            <tr className="text-white text-[10px] text-center font-bold">
+              <th className="sticky left-0 top-0 z-50 bg-slate-900 p-3 min-w-[100px] border-b border-r border-slate-700">職員名</th>
+              {days.map(d => {
+                const info = getDayInfo(d);
+                // その日の各シフトの合計を計算
+                const getCount = (type: string) => staffMembers.filter(n => currentData[getShiftKey(n, d)] === type).length;
+                
+                return (
+                  <th key={d} className={`p-1 min-w-[42px] border-b border-r border-slate-700 ${info.headerColor}`}>
+                    <div className="mb-1">{d}</div>
+                    {/* 合計行の代わりに、ヘッダー内にコンパクトに表示 */}
+                    <div className="flex flex-col gap-0.5 text-[7px] leading-tight bg-black/20 rounded py-0.5">
+                      {getCount("日") > 0 && <span>日:{getCount("日")}</span>}
+                      {getCount("早") > 0 && <span>早:{getCount("早")}</span>}
+                      {getCount("遅") > 0 && <span>遅:{getCount("遅")}</span>}
+                      {getCount("夜") > 0 && <span>夜:{getCount("夜")}</span>}
+                    </div>
+                  </th>
+                );
+              })}
+              {shiftTypes.map(t => (
+                <th key={t.key} className="p-1 min-w-[32px] bg-slate-900 border-b border-slate-700 text-[8px]">{t.key}</th>
+              ))}
+            </tr>
+          </thead>
             <tbody>
               {staffMembers.map(name => {
                 const isDisabled = currentUser !== null && currentUser !== name;
