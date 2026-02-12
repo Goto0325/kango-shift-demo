@@ -131,7 +131,7 @@ export default function Home() {
                 const isDisabled = currentUser !== null && currentUser !== name;
                 return (
                   <tr key={name} className="h-11 group">
-                    <td className={`sticky left-0 z-40 p-2 border-b border-r border-slate-200 flex items-center justify-between !bg-white font-bold transition ${isDisabled ? "text-slate-300" : "text-slate-800"}`}>
+                    <td className={`sticky left-0 z-30 p-2 border-b border-r border-slate-200 flex items-center justify-between !bg-white font-bold transition ${isDisabled ? "text-slate-300" : "text-slate-800"}`}>
                       <button onClick={() => !isDisabled && removeStaff(name)} className={`text-red-300 hover:text-red-500 transition ${isDisabled ? "invisible" : ""}`}>✕</button>
                       <span className="truncate ml-1">{name}</span>
                     </td>
