@@ -164,9 +164,9 @@ export default function Home() {
             {/* 修正：独立した tfoot を使い、bottom-0 で固定 */}
             <tfoot className="sticky -bottom-[1px] z-50">
               <tr className="bg-slate-900 text-white font-bold h-14 shadow-[0_-4px_10px_rgba(0,0,0,0.3)]">
-                <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center text-xs uppercase tracking-tighter">
-                  合計
-                </td>
+              <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center uppercase tracking-tighter shadow-[2px_0_5px_rgba(0,0,0,0.3)]">
+                合計
+              </td>
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     {/* 文字を大きく(text-[11px])、行間を詰めて読みやすくしました */}
