@@ -131,9 +131,17 @@ export default function Home() {
                 const isDisabled = currentUser !== null && currentUser !== name;
                 return (
                   <tr key={name} className="h-11 group">
-                    <td className={`sticky left-0 z-30 p-2 border-b border-r border-slate-200 flex items-center justify-between !bg-white font-bold transition ${isDisabled ? "text-slate-300" : "text-slate-800"}`}>
-                      <button onClick={() => !isDisabled && removeStaff(name)} className={`text-red-300 hover:text-red-500 transition ${isDisabled ? "invisible" : ""}`}>✕</button>
-                      <span className="truncate ml-1">{name}</span>
+                    <td className={`sticky left-0 z-40 p-2 border-b border-r border-slate-200 flex items-center justify-between !bg-white font-bold transition-all ${isDisabled ? "text-slate-300" : "text-slate-800"}`}>
+                      {/* ✕ボタンと名前の間隔を少し調整 */}
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <button 
+                          onClick={() => !isDisabled && removeStaff(name)} 
+                          className={`text-red-300 hover:text-red-500 transition-colors shrink-0 ${isDisabled ? "invisible" : ""}`}
+                        >
+                          ✕
+                        </button>
+                        <span className="truncate">{name}</span>
+                      </div>
                     </td>
                     {days.map(d => {
                       const info = getDayInfo(d);
@@ -164,7 +172,7 @@ export default function Home() {
             {/* 修正：独立した tfoot を使い、bottom-0 で固定 */}
             <tfoot className="sticky -bottom-[1px] z-50">
               <tr className="bg-slate-900 text-white font-bold h-14 shadow-[0_-4px_10px_rgba(0,0,0,0.3)]">
-              <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center uppercase tracking-tighter shadow-[2px_0_5px_rgba(0,0,0,0.3)]">
+              <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center text-[10px] font-bold uppercase tracking-tighter shadow-[2px_0_5px_rgba(0,0,0,0.3)]">
                 合計
               </td>
                 {days.map(d => (
