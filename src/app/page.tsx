@@ -97,50 +97,43 @@ export default function Home() {
       </div>
 
       {/* 2. テーブルエリア：ここが肝心 */}
+      {/* 2. テーブルエリア：ここを「基準」として作り直しました */}
       <div className="flex-1 overflow-hidden px-2 md:px-6 pb-4">
-        <div className="h-full w-full overflow-auto border rounded-xl shadow-2xl bg-white border-separate">
+        {/* 親要素に relative を付け、overflow-auto でスクロールの基準を明確にします */}
+        <div className="h-full w-full overflow-auto border rounded-xl shadow-2xl bg-white relative border-separate">
           <table className="border-separate border-spacing-0 min-w-full">
-          <thead className="sticky top-0 z-50">
-            <tr className="text-white text-[10px] text-center font-bold">
-              <th className="sticky left-0 top-0 z-50 bg-slate-900 p-3 min-w-[100px] border-b border-r border-slate-700">職員名</th>
-              {days.map(d => {
-                const info = getDayInfo(d);
-                // その日の各シフトの合計を計算
-                const getCount = (type: string) => staffMembers.filter(n => currentData[getShiftKey(n, d)] === type).length;
-                
-                return (
-                  <th key={d} className={`p-1 min-w-[42px] border-b border-r border-slate-700 ${info.headerColor}`}>
-                    <div className="mb-1">{d}</div>
-                    {/* 合計行の代わりに、ヘッダー内にコンパクトに表示 */}
-                    <div className="flex flex-col gap-0.5 text-[7px] leading-tight bg-black/20 rounded py-0.5">
-                      {getCount("日") > 0 && <span>日:{getCount("日")}</span>}
-                      {getCount("早") > 0 && <span>早:{getCount("早")}</span>}
-                      {getCount("遅") > 0 && <span>遅:{getCount("遅")}</span>}
-                      {getCount("夜") > 0 && <span>夜:{getCount("夜")}</span>}
-                    </div>
-                  </th>
-                );
-              })}
-              {shiftTypes.map(t => (
-                <th key={t.key} className="p-1 min-w-[32px] bg-slate-900 border-b border-slate-700 text-[8px]">{t.key}</th>
-              ))}
-            </tr>
-          </thead>
+            <thead className="sticky top-0 z-[100]">
+              <tr className="text-white text-[10px] text-center font-bold">
+                {/* 1列目ヘッダー：ここも固定必須 */}
+                <th className="sticky left-0 top-0 z-[110] bg-slate-900 p-3 min-w-[110px] border-b border-r border-slate-700">
+                  職員名
+                </th>
+                {days.map(d => {
+                  const info = getDayInfo(d);
+                  return (
+                    <th key={d} className={`p-1 min-w-[42px] border-b border-r border-slate-700 ${info.headerColor}`}>
+                      <div>{d}</div>
+                    </th>
+                  );
+                })}
+                {shiftTypes.map(t => (
+                  <th key={t.key} className="p-1 min-w-[32px] bg-slate-900 border-b border-slate-700 text-[8px]">{t.key}</th>
+                ))}
+              </tr>
+            </thead>
             <tbody>
               {staffMembers.map(name => {
                 const isDisabled = currentUser !== null && currentUser !== name;
                 return (
-                  <tr key={name} className="h-11 group">
-                    <td className={`sticky left-0 z-40 p-2 border-b border-r border-slate-200 flex items-center justify-between !bg-white font-bold transition-all ${isDisabled ? "text-slate-300" : "text-slate-800"}`}>
-                      {/* ✕ボタンと名前の間隔を少し調整 */}
-                      <div className="flex items-center gap-2 overflow-hidden">
+                  <tr key={name} className="h-11">
+                    {/* 職員名セル：背景色を !bg-white で塗りつぶし、後ろを隠します */}
+                    <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all ${isDisabled ? "text-slate-300" : "text-slate-800"} min-w-[110px] w-[110px]`}>
+                      <div className="flex items-center justify-between">
                         <button 
                           onClick={() => !isDisabled && removeStaff(name)} 
                           className={`text-red-300 hover:text-red-500 transition-colors shrink-0 ${isDisabled ? "invisible" : ""}`}
-                        >
-                          ✕
-                        </button>
-                        <span className="truncate">{name}</span>
+                        >✕</button>
+                        <span className="truncate ml-1">{name}</span>
                       </div>
                     </td>
                     {days.map(d => {
@@ -169,36 +162,27 @@ export default function Home() {
                 );
               })}
             </tbody>
-            {/* 修正：独立した tfoot を使い、bottom-0 で固定 */}
-            <tfoot className="sticky -bottom-[1px] z-50">
+            {/* 合計行も左端を固定 */}
+            <tfoot className="sticky bottom-0 z-[100]">
               <tr className="bg-slate-900 text-white font-bold h-14 shadow-[0_-4px_10px_rgba(0,0,0,0.3)]">
-              <td className="sticky left-0 z-50 !bg-slate-900 p-2 border-r border-slate-700 text-center text-[10px] font-bold uppercase tracking-tighter shadow-[2px_0_5px_rgba(0,0,0,0.3)]">
-                合計
-              </td>
+                <td className="sticky left-0 z-[110] !bg-slate-900 p-2 border-r border-slate-700 text-center text-xs uppercase tracking-tighter min-w-[110px]">
+                  合計
+                </td>
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
-                    {/* 文字を大きく(text-[11px])、行間を詰めて読みやすくしました */}
                     <div className="flex flex-col justify-center items-center h-full gap-0">
-                      {[
-                        { key: "日", color: "text-white" },
-                        { key: "早", color: "text-orange-400" },
-                        { key: "遅", color: "text-purple-400" },
-                        { key: "夜", color: "text-blue-400" }
-                      ].map(t => {
-                        const count = staffMembers.filter(n => currentData[getShiftKey(n, d)] === t.key).length;
+                      {["日", "早", "遅", "夜"].map(type => {
+                        const count = staffMembers.filter(n => currentData[getShiftKey(n, d)] === type).length;
                         return count > 0 ? (
-                          <span key={t.key} className={`${t.color} text-[11px] leading-tight flex items-center gap-0.5`}>
-                            {t.key}<span className="text-[10px]">:</span>{count}
+                          <span key={type} className={`text-[11px] leading-tight ${type==="早"?"text-orange-400":type==="遅"?"text-purple-400":type==="夜"?"text-blue-400":"text-white"}`}>
+                            {type}:{count}
                           </span>
                         ) : null;
                       })}
                     </div>
                   </td>
                 ))}
-                {/* 右端の集計列の下を埋める */}
-                {shiftTypes.map(t => (
-                  <td key={t.key} className="!bg-slate-900 border-slate-700"></td>
-                ))}
+                {shiftTypes.map(t => <td key={t.key} className="!bg-slate-900 border-slate-700"></td>)}
               </tr>
             </tfoot>
           </table>
