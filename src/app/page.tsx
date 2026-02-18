@@ -63,6 +63,17 @@ export default function Home() {
               {!currentUser && (
                 <button onClick={() => setViewMode("actual")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}>実績確定</button>
               )}
+              {viewMode === "plan" && (
+              <button 
+                onClick={() => {
+                  copyToActual(); // ここで外部ファイル(useShiftManager)の機能を呼び出し！
+                  alert("予定を実績にコピーしました。実績確定画面で確認してください。");
+                }} 
+                className="bg-green-600 text-white px-2 py-1.5 rounded text-[10px] font-bold shadow-sm"
+              >
+                実績反映
+              </button>
+            )}
             </div>
           </div>
 
