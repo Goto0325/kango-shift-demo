@@ -89,12 +89,18 @@ export const useShiftManager = (year: number, month: number) => {
     localStorage.setItem('kango-shifts', JSON.stringify(newShifts));
   };
 
-  const copyToActual = () => {
-    if (!window.confirm("予定を実績に反映しますか？")) return;
-    const newActual = { ...actualShifts, ...shifts };
-    setActualShifts(newActual);
-    localStorage.setItem('kango-actual', JSON.stringify(newActual));
-  };
+// useShiftManager.ts の中
+const copyToActual = () => {
+  if (typeof window !== "undefined") {
+    if (!window.confirm("現在の予定を実績にコピーしますか？\n（既存の実績データは上書きされます）")) {
+      return false; // ← 1. キャンセルされたら false を返すように追加
+    }
+    
+    setActualShifts({ ...shifts });
+    return true; // ← 2. 成功したら true を返すように追加
+  }
+  return false; // ← ここも一応 false
+};
 
   return {
     staffMembers, shifts, actualShifts, addStaff, removeStaff, 
