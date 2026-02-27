@@ -61,10 +61,9 @@ export default function Home() {
             <div className="flex gap-2">
             {viewMode === "plan" && (
               <button 
-                onClick={() => {
-                  // copyToActualを実行し、その結果（trueかfalse）を受け取る
-                  const success = copyToActual(); 
-                  
+                onClick={async () => {
+                  // 修正: copyToActual が Promise<boolean> を返す場合は await が必要
+                  const success = await copyToActual();
                   // 本当にコピーされた時（OKを押した時）だけアラートを出す
                   if (success) {
                     alert("予定を実績にコピーしました。実績確定画面で確認してください。");
@@ -75,9 +74,9 @@ export default function Home() {
                 実績反映
               </button>
             )}
-              <button onClick={() => setViewMode("plan")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow-lg" : "bg-white border"}`}>予定入力</button>
+              <button onClick={() => setViewMode("plan")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow-lg" : "bg-white border"}`}>予定</button>
               {!currentUser && (
-                <button onClick={() => setViewMode("actual")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}>実績確定</button>
+                <button onClick={() => setViewMode("actual")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}>実績</button>
               )}
     
             </div>
@@ -147,7 +146,7 @@ export default function Home() {
                     <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all ${isDisabled ? "text-slate-300" : "text-slate-800"} min-w-[110px] w-[110px]`}>
                       <div className="flex items-center justify-between">
                         <button 
-                          onClick={() => !isDisabled && removeStaff(name)} 
+                          onClick={() => { if (!isDisabled) removeStaff(name); }} 
                           className={`text-red-300 hover:text-red-500 transition-colors shrink-0 ${isDisabled ? "invisible" : ""}`}
                         >✕</button>
                         <span className="truncate ml-1">{name}</span>
