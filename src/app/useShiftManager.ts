@@ -147,7 +147,8 @@ export const useShiftManager = (year: number, month: number) => {
   // 自動生成→各シフトをSupabaseにupsert & state上書き
   const autoGenerate = async (daysInMonth: number) => {
     const newShifts = { ...shifts };
-    const pool = ["日", "早", "遅", "夜", "休", "有", "夏", "冬"];
+    // 勤務パターンに「夏」（夏休み）・「冬」（冬休み）・「有」（有給）を追加
+    const pool = ["日", "早", "遅", "夜", "休", "夏", "冬", "有"];
     const records: any[] = [];
     staffMembers.forEach(name => {
       for (let d = 1; d <= daysInMonth; d++) {

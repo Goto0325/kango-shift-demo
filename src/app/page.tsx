@@ -30,6 +30,9 @@ export default function Home() {
     { key: "夜", label: "夜勤", color: "text-blue-700" },
     { key: "明", label: "明け", color: "text-blue-400" },
     { key: "休", label: "休み", color: "text-green-700" },
+    { key: "夏", label: "夏休み", color: "text-yellow-700" },
+    { key: "冬", label: "冬休み", color: "text-blue-900" },
+    { key: "有", label: "有給", color: "text-pink-700" },
   ];
 
   const getDayInfo = (day: number) => {
