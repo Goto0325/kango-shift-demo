@@ -1,19 +1,81 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useShiftManager, ViewMode } from './useShiftManager';
+// supabase のクライアントを import（自分のプロジェクトに合わせてください）
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+type UserProfile = {
+  id: string;
+  name: string;
+  department_id: number;
+};
 
 export default function Home() {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
   const [viewMode, setViewMode] = useState<ViewMode>("plan");
   const [newStaffName, setNewStaffName] = useState(""); // 追加機能を復活
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  // アクセストークンを state に持たせる
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
+  const [departmentId, setDepartmentId] = useState<number | null>(null);
 
+  // URLパラメータの解析: ?key=... がある場合は access_token として扱う
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setCurrentUser(params.get('user'));
+    const key = params.get('key');
+    const user = params.get('user'); // fallbackで未対応の人用
+
+    if (key) {
+      setAccessToken(key);
+    } else if (user) {
+      // fallback: 非ログイン制御(userクエリ)
+      setCurrentUserProfile({
+        id: '',
+        name: user,
+        department_id: -1,
+      });
+      setDepartmentId(null);
+    }
   }, []);
 
+  // access_tokenがセットされた場合にSupabase認証・プロファイル取得
+  useEffect(() => {
+    const fetchProfile = async (token: string) => {
+      // 認証(userオブジェクト取得)
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (error || !user) {
+        setCurrentUserProfile(null);
+        setDepartmentId(null);
+        return;
+      }
+
+      // profileテーブルなどから名前・部署を取得（usersテーブル前提。異なる場合は適宜修正）
+      // 例: users テーブルに name, department_id があると仮定
+      const { data: profile, error: pErr } = await supabase
+        .from("users")
+        .select("id, name, department_id")
+        .eq("id", user.id)
+        .single();
+      if (profile && !pErr) {
+        setCurrentUserProfile(profile);
+        setDepartmentId(profile.department_id);
+      } else {
+        setCurrentUserProfile(null);
+        setDepartmentId(null);
+      }
+    };
+
+    if (accessToken) {
+      fetchProfile(accessToken);
+    }
+  }, [accessToken]);
+
+  // useShiftManager から値を取る
   const {
     staffMembers, shifts, actualShifts, addStaff, removeStaff, 
     saveShift, autoGenerate, copyToActual, resetMonth, getShiftKey, getHopeKey
@@ -54,6 +116,44 @@ export default function Home() {
     }
   };
 
+  // 部署で staffMembers をフィルタ
+  // staffMembers 配列を department_id でフィルタリングするロジックが必要。
+  // 現状 useShiftManager から配列取得だが、各staffのdepartment_idが必要。
+  // 仮のサンプルとして「databaseから職員リスト取得」もやる例
+
+  const [departmentStaffs, setDepartmentStaffs] = useState<string[]>([]);
+  // departmentIdが決まったら、そのidのstaffのみ取得
+  useEffect(() => {
+    const fetchDepartmentStaffs = async () => {
+      if (departmentId !== null && departmentId !== undefined && departmentId > 0) {
+        // 例: usersテーブルの"department_id"が一致する staff_nameのみ抽出
+        const { data, error } = await supabase
+          .from("users")
+          .select("name")
+          .eq("department_id", departmentId);
+        if (!error && data) {
+          setDepartmentStaffs(data.map((x: { name: string }) => x.name));
+        } else {
+          setDepartmentStaffs([]);
+        }
+      } else {
+        setDepartmentStaffs([]);
+      }
+    };
+    fetchDepartmentStaffs();
+  }, [departmentId]);
+
+  // staffMembers を departmentStaffs で絞る
+  const filteredStaffMembers = useMemo(() => {
+    // ログインなし→すべて表示
+    if (!departmentId || departmentId <= 0) return staffMembers;
+    // ログインあり→部署のみ
+    return staffMembers.filter(s => departmentStaffs.includes(s));
+  }, [staffMembers, departmentStaffs, departmentId]);
+
+  // 画面上で表示するユーザ名
+  const loggedInName = currentUserProfile?.name;
+
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
       {/* 1. ヘッダー：追加機能などを集約 */}
@@ -61,31 +161,39 @@ export default function Home() {
         <header className="flex flex-col gap-3">
           <div className="flex justify-between items-center">
             <h1 className="text-xl font-black text-blue-900 tracking-tight">勤務表 Pro v2</h1>
-            <div className="flex gap-2">
-            {viewMode === "plan" && (
-              <button 
-                onClick={async () => {
-                  // 修正: copyToActual が Promise<boolean> を返す場合は await が必要
-                  const success = await copyToActual();
-                  // 本当にコピーされた時（OKを押した時）だけアラートを出す
-                  if (success) {
-                    alert("予定を実績にコピーしました。実績確定画面で確認してください。");
-                  }
-                }} 
-                className="bg-green-600 text-white px-2 py-1.5 rounded text-[10px] font-bold shadow-sm"
-              >
-                実績反映
-              </button>
-            )}
+            <div className="flex gap-2 items-center">
+              {/* ログイン時はログインユーザ名＋部署を表示 */}
+              {loggedInName && (
+                <span className="text-sm text-blue-700 font-bold mr-2" title={loggedInName}>
+                  {loggedInName}さん
+                  {departmentId && departmentId > 0 && (
+                    <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                      部署{departmentId}
+                    </span>
+                  )}
+                </span>
+              )}
+              {viewMode === "plan" && (
+                <button 
+                  onClick={async () => {
+                    const success = await copyToActual();
+                    if (success) {
+                      alert("予定を実績にコピーしました。実績確定画面で確認してください。");
+                    }
+                  }} 
+                  className="bg-green-600 text-white px-2 py-1.5 rounded text-[10px] font-bold shadow-sm"
+                >
+                  実績反映
+                </button>
+              )}
               <button onClick={() => setViewMode("plan")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow-lg" : "bg-white border"}`}>予定</button>
-              {!currentUser && (
+              {!loggedInName && (
                 <button onClick={() => setViewMode("actual")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}>実績</button>
               )}
-    
             </div>
           </div>
 
-          {!currentUser && (
+          {!loggedInName && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
               <div className="flex gap-2 items-center">
                 <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="font-bold border rounded-md p-1.5 bg-slate-50 text-sm">
@@ -141,8 +249,8 @@ export default function Home() {
               </tr>
             </thead>
             <tbody>
-              {staffMembers.map(name => {
-                const isDisabled = currentUser !== null && currentUser !== name;
+              {filteredStaffMembers.map(name => {
+                const isDisabled = !!loggedInName && loggedInName !== name;
                 return (
                   <tr key={name} className="h-11">
                     {/* 職員名セル：背景色を !bg-white で塗りつぶし、後ろを隠します */}
@@ -163,7 +271,7 @@ export default function Home() {
                           <select 
                             value={currentData[getShiftKey(name, d)] || ""} 
                             disabled={isDisabled}
-                            onChange={(e) => saveShift(name, d, e.target.value, viewMode, currentUser !== null)} 
+                            onChange={(e) => saveShift(name, d, e.target.value, viewMode, !!loggedInName)} 
                             className="w-full text-center h-9 bg-transparent outline-none appearance-none cursor-pointer text-[11px]"
                           >
                             <option value="">-</option>
@@ -191,7 +299,7 @@ export default function Home() {
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
                       {["日", "早", "遅", "夜"].map(type => {
-                        const count = staffMembers.filter(n => currentData[getShiftKey(n, d)] === type).length;
+                        const count = filteredStaffMembers.filter(n => currentData[getShiftKey(n, d)] === type).length;
                         return count > 0 ? (
                           <span key={type} className={`text-[11px] leading-tight ${type==="早"?"text-orange-400":type==="遅"?"text-purple-400":type==="夜"?"text-blue-400":"text-white"}`}>
                             {type}:{count}
