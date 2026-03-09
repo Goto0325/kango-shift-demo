@@ -18,20 +18,23 @@ type StaffMasterProfile = {
 
 type ShiftRecord = {
   id: number;
-  staff_id: string; // staff_master.id
-  date: string; // e.g. '2026-02-01'
+  staff_id: string;
+  date: string;
   shift_type: string | null;
-  mode: string; // 'plan' or 'actual'
+  mode: string;
 };
 
 export default function Home() {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
 
-  // パラメータ取得とログイン者確認
+  // ログイン/自身のプロファイル
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [staffProfile, setStaffProfile] = useState<StaffMasterProfile | null>(null);
   const [departmentId, setDepartmentId] = useState<number | null>(null);
+
+  // メンバ一覧（表示の基礎とする）
+  const [members, setMembers] = useState<StaffMasterProfile[]>([]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -40,6 +43,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    // ログインユーザー認証・情報取得
     const fetchStaffMaster = async (token: string) => {
       const { data, error } = await supabase
         .from("staff_master")
@@ -62,23 +66,47 @@ export default function Home() {
     }
   }, [accessToken]);
 
-  // 部署内全職員取得
-  const [departmentStaffProfiles, setDepartmentStaffProfiles] = useState<StaffMasterProfile[]>([]);
+  // 部署内全職員データ取得＋自分の行1行目ルール
   useEffect(() => {
-    const fetchDepartmentStaffProfiles = async () => {
+    const fetchMembers = async () => {
       if (departmentId && departmentId > 0) {
         const { data, error } = await supabase
           .from("staff_master")
           .select("*")
           .eq("department_id", departmentId)
           .order("staff_name", { ascending: true });
-        setDepartmentStaffProfiles(!error && data ? data : []);
+
+        if (!error && Array.isArray(data)) {
+          // Goto Tatsuki（ログイン者）取得&行頭挿入ロジック
+          let membersArr = [...data];
+          if (staffProfile) {
+            const idx = membersArr.findIndex(s => s.id === staffProfile.id);
+            if (idx >= 0) {
+              // 既にリスト内なら先頭へ
+              const [me] = membersArr.splice(idx, 1);
+              membersArr = [me, ...membersArr];
+            }
+          }
+          setMembers(membersArr);
+          if (membersArr.length === 0) {
+            console.error("エラー: 部署の職員データが0件です。");
+          } else {
+            console.log("表示する職員:", membersArr);
+          }
+        } else {
+          setMembers([]);
+          console.error("エラー: 部署の職員データ取得失敗または0件です。");
+        }
       } else {
-        setDepartmentStaffProfiles([]);
+        setMembers([]);
+        if (departmentId !== null) {
+          console.error("エラー: 部署ID指定が不正です。");
+        }
       }
     };
-    fetchDepartmentStaffProfiles();
-  }, [departmentId]);
+
+    fetchMembers();
+  }, [departmentId, staffProfile]);
 
   // シフト実績取得
   const [shiftRecords, setShiftRecords] = useState<ShiftRecord[]>([]);
@@ -94,7 +122,7 @@ export default function Home() {
       const startDate = d1.toISOString().slice(0, 10);
       const endDate = d2.toISOString().slice(0, 10);
 
-      const staffIds = departmentStaffProfiles.map((s) => s.id);
+      const staffIds = members.map((s) => s.id);
       if (staffIds.length === 0) {
         setShiftRecords([]);
         return;
@@ -110,7 +138,8 @@ export default function Home() {
       setShiftRecords(!error && data ? data : []);
     };
     fetchShifts();
-  }, [departmentId, viewMode, year, month, departmentStaffProfiles]);
+    // 'members' の変更も監視
+  }, [departmentId, viewMode, year, month, members]);
 
   // 日付配列
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -127,34 +156,7 @@ export default function Home() {
     };
   };
 
-  // ここから displayMembers ロジック -- departmentStaffProfilesは常にstaff_master(部署内)ベース
-
-  const displayMembers = useMemo(() => {
-    //（1）Goto Tatsukiがstaff_masterに入っていれば、常に最初
-    //（2）他のメンバー並びは”ログイン者以外”→元の並び
-    if (!staffProfile || !departmentStaffProfiles || departmentStaffProfiles.length === 0) return [];
-
-    let result: StaffMasterProfile[] = [];
-    // 検索名（この例なら”Goto Tatsuki”だが今はstaff_nameで”-san”なども違うのでIDで一致が安全)
-    const loggedInId = staffProfile.id;
-    const loggedInInDepartment = departmentStaffProfiles.find((m) => m.id === loggedInId);
-
-    if (loggedInInDepartment) {
-      // 1行目にログイン者
-      result = [
-        loggedInInDepartment,
-        ...departmentStaffProfiles.filter((m) => m.id !== loggedInId),
-      ];
-    } else {
-      result = [...departmentStaffProfiles];
-    }
-    return result;
-  }, [departmentStaffProfiles, staffProfile]);
-
-  // デバッグ用のログ
-  console.log("現在表示しようとしている行データ:", displayMembers);
-
-  // シフトデータへ高速アクセス用Map（staff_id->date->shift_type）
+  // シフトMap
   const shiftMap: { [staffId: string]: { [date: string]: string | null } } = {};
   shiftRecords.forEach((rec) => {
     if (!shiftMap[rec.staff_id]) shiftMap[rec.staff_id] = {};
@@ -187,9 +189,9 @@ export default function Home() {
   const saveShift = async () => {
     if (
       !editingShift ||
-      viewMode !== "plan" || // 編集は予定モードのみ
+      viewMode !== "plan" ||
       !departmentId ||
-      !editValue // 必須
+      !editValue
     ) return;
     setIsSaving(true);
     try {
@@ -229,7 +231,7 @@ export default function Home() {
       const d2 = new Date(year, month, 0);
       const startDate = d1.toISOString().slice(0, 10);
       const endDate = d2.toISOString().slice(0, 10);
-      const staffIds = departmentStaffProfiles.map((s) => s.id);
+      const staffIds = members.map((s) => s.id);
       const { data: refreshed, error: refError } = await supabase
         .from("shifts")
         .select("*")
@@ -281,9 +283,10 @@ export default function Home() {
     try {
       const parsed = JSON.parse(staffProfile.work_patterns);
       if (Array.isArray(parsed)) {
+        // nameでjoinし、null/undefinedは除外
         return parsed.map((x: any) => x?.name).filter(Boolean).join(",");
       }
-      if (parsed && typeof parsed === 'object' && (parsed.name || parsed.label)) {
+      if (parsed && typeof parsed === "object" && (parsed.name || parsed.label)) {
         return parsed.name || parsed.label;
       }
     } catch {
@@ -294,7 +297,15 @@ export default function Home() {
 
   const paidLeave = staffProfile?.paid_leave_remaining;
 
-  // 画面
+  // デバッグ
+  React.useEffect(() => {
+    if (members.length === 0) {
+      console.error("エラー: 表示する職員データが0件です。");
+    } else {
+      console.log("表示する職員:", members);
+    }
+  }, [members]);
+
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
       {/* 1. ヘッダー */}
@@ -358,7 +369,7 @@ export default function Home() {
               </tr>
             </thead>
             <tbody>
-              {displayMembers.map((profile) => {
+              {members.map((profile) => {
                 // 職種パース
                 let jobTitle = "";
                 if (profile.job_title) {
@@ -494,7 +505,7 @@ export default function Home() {
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
                       {["日", "早", "遅", "夜"].map(type => {
-                        const count = displayMembers.filter(n => {
+                        const count = members.filter(n => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
                           return shiftMap?.[n.id]?.[dayStr] === type;
                         }).length;
