@@ -225,13 +225,13 @@ export default function Home() {
     setEditValue(current);
   };
 
-  // 編集確定
+  // 編集確定（修正：editValueが空文字 '' の場合も保存できるよう修正）
   const saveShift = async () => {
     if (
       !editingShift ||
       viewMode !== "plan" ||
       !departmentId ||
-      !editValue
+      editValue === null // ←空文字 '' は許可
     ) return;
     setIsSaving(true);
     try {
@@ -242,13 +242,13 @@ export default function Home() {
       if (existing) {
         const { data, error } = await supabase
           .from("shifts")
-          .update({ shift_type: editValue })
+          .update({ shift_type: editValue === "" ? null : editValue })
           .eq("id", existing.id)
           .single();
         if (!error && data) {
           result = data;
         }
-      } else {
+      } else if (editValue !== "") { // 新規登録は空でなければ
         const { data, error } = await supabase
           .from("shifts")
           .insert([
@@ -544,13 +544,12 @@ export default function Home() {
                             >
                               <select
                                 className="border px-2 py-1 rounded bg-white text-xs w-full"
-                                value={editValue || ""}
+                                value={editValue === null ? "" : editValue}
                                 autoFocus
                                 disabled={isSaving}
                                 onChange={e => setEditValue(e.target.value)}
                                 onClick={e => e.stopPropagation()}
-                                onBlur={saveShift}
-                                style={{ minWidth: 50 }}
+                                // onBlur={saveShift} ← onBlurで保存は一旦やめて、失敗時(選択できない)を避ける
                               >
                                 <option value="">-</option>
                                 {patterns.map(pt => (
@@ -559,6 +558,25 @@ export default function Home() {
                                   </option>
                                 ))}
                               </select>
+                              <button
+                                type="submit"
+                                className="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-700"
+                                disabled={isSaving}
+                              >
+                                保存
+                              </button>
+                              <button
+                                type="button"
+                                className="ml-1 px-2 py-1 text-xs bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                                onClick={e => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleCancel();
+                                }}
+                                disabled={isSaving}
+                              >
+                                ｷｬﾝｾﾙ
+                              </button>
                               {isSaving && (
                                 <span className="ml-2 text-xs text-blue-500 animate-pulse">保存中...</span>
                               )}
