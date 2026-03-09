@@ -80,7 +80,7 @@ export default function Home() {
     fetchDepartmentStaffProfiles();
   }, [departmentId]);
 
-  // シフト実績取得（ログインしていれば部署全員分を取得する）
+  // シフト実績取得
   const [shiftRecords, setShiftRecords] = useState<ShiftRecord[]>([]);
   const [viewMode, setViewMode] = useState<'plan' | 'actual'>("plan");
   useEffect(() => {
@@ -89,20 +89,16 @@ export default function Home() {
         setShiftRecords([]);
         return;
       }
-      // 該当月の日付範囲を作成
       const d1 = new Date(year, month - 1, 1);
       const d2 = new Date(year, month, 0);
       const startDate = d1.toISOString().slice(0, 10);
       const endDate = d2.toISOString().slice(0, 10);
 
-      // 対象staff_idだけを抽出
       const staffIds = departmentStaffProfiles.map((s) => s.id);
       if (staffIds.length === 0) {
         setShiftRecords([]);
         return;
       }
-
-      // supabaseクエリ
       const { data, error } = await supabase
         .from("shifts")
         .select("*")
@@ -114,7 +110,6 @@ export default function Home() {
       setShiftRecords(!error && data ? data : []);
     };
     fetchShifts();
-    // departmentStaffProfiles を依存に含めると staffIdリストをさらに早く反映
   }, [departmentId, viewMode, year, month, departmentStaffProfiles]);
 
   // 日付配列
@@ -132,14 +127,32 @@ export default function Home() {
     };
   };
 
-  // シフト表示テーブルを部署モードのみ（ログイン時のみ）に限定
-  const displayStaffProfiles = useMemo(() => {
-    if (departmentId && departmentId > 0) {
-      return departmentStaffProfiles;
+  // ここから displayMembers ロジック -- departmentStaffProfilesは常にstaff_master(部署内)ベース
+
+  const displayMembers = useMemo(() => {
+    //（1）Goto Tatsukiがstaff_masterに入っていれば、常に最初
+    //（2）他のメンバー並びは”ログイン者以外”→元の並び
+    if (!staffProfile || !departmentStaffProfiles || departmentStaffProfiles.length === 0) return [];
+
+    let result: StaffMasterProfile[] = [];
+    // 検索名（この例なら”Goto Tatsuki”だが今はstaff_nameで”-san”なども違うのでIDで一致が安全)
+    const loggedInId = staffProfile.id;
+    const loggedInInDepartment = departmentStaffProfiles.find((m) => m.id === loggedInId);
+
+    if (loggedInInDepartment) {
+      // 1行目にログイン者
+      result = [
+        loggedInInDepartment,
+        ...departmentStaffProfiles.filter((m) => m.id !== loggedInId),
+      ];
+    } else {
+      result = [...departmentStaffProfiles];
     }
-    // 未ログイン時は空配列表示
-    return [];
-  }, [departmentId, departmentStaffProfiles]);
+    return result;
+  }, [departmentStaffProfiles, staffProfile]);
+
+  // デバッグ用のログ
+  console.log("現在表示しようとしている行データ:", displayMembers);
 
   // シフトデータへ高速アクセス用Map（staff_id->date->shift_type）
   const shiftMap: { [staffId: string]: { [date: string]: string | null } } = {};
@@ -149,7 +162,6 @@ export default function Home() {
   });
 
   // シフトタイプ選択state
-  // 各セルごとに入力値を管理（staff_id, date => 選択値）. 編集時以外はCRUDしない
   const [editingShift, setEditingShift] = useState<{
     staff_id: string;
     date: string;
@@ -181,13 +193,11 @@ export default function Home() {
     ) return;
     setIsSaving(true);
     try {
-      // 既存レコード判定
       const existing = shiftRecords.find(
         s => s.staff_id === editingShift.staff_id && s.date === editingShift.date && s.mode === "plan"
       );
       let result;
       if (existing) {
-        // update
         const { data, error } = await supabase
           .from("shifts")
           .update({ shift_type: editValue })
@@ -197,7 +207,6 @@ export default function Home() {
           result = data;
         }
       } else {
-        // insert
         const { data, error } = await supabase
           .from("shifts")
           .insert([
@@ -213,10 +222,9 @@ export default function Home() {
           result = data;
         }
       }
-      // 正常時：再取得
       setEditingShift(null);
       setEditValue(null);
-      // saveが終わったあと全体再ロード
+      // save後リロード
       const d1 = new Date(year, month - 1, 1);
       const d2 = new Date(year, month, 0);
       const startDate = d1.toISOString().slice(0, 10);
@@ -230,9 +238,7 @@ export default function Home() {
         .lte("date", endDate)
         .eq("mode", viewMode);
       setShiftRecords(!refError && refreshed ? refreshed : []);
-    } catch {
-      // エラー時は何もしない
-    }
+    } catch {}
     setIsSaving(false);
   };
 
@@ -246,14 +252,11 @@ export default function Home() {
   useEffect(() => {
     if (!editingShift) return;
     const handler = (e: MouseEvent) => {
-      // 編集要素内の場合は消さない（target.classList.contains）
-      // ここでは楽なので全キャンセル
       setEditingShift(null);
       setEditValue(null);
     };
     window.addEventListener("click", handler, { capture: true });
     return () => window.removeEventListener("click", handler, { capture: true });
-    // eslint-disable-next-line
   }, [editingShift]);
 
   // ログイン情報（右上）
@@ -271,22 +274,24 @@ export default function Home() {
     }
     return staffProfile.job_title;
   }, [staffProfile?.job_title]);
-  // パターン解釈：JSON配列を正しく解釈し、[object Object]の回避
+
+  // パターン解釈: 配列から name だけjoinして画面右上 [object Object] を防ぐ
   const loggedInPatterns = React.useMemo(() => {
     if (!staffProfile?.work_patterns) return "";
     try {
       const parsed = JSON.parse(staffProfile.work_patterns);
       if (Array.isArray(parsed)) {
-        return parsed.map((x: any) => x?.name || x?.label).filter(Boolean).join(",");
+        return parsed.map((x: any) => x?.name).filter(Boolean).join(",");
       }
-      if (parsed && (parsed.name || parsed.label)) {
+      if (parsed && typeof parsed === 'object' && (parsed.name || parsed.label)) {
         return parsed.name || parsed.label;
       }
     } catch {
-      return staffProfile.work_patterns;
+      return "";
     }
-    return staffProfile.work_patterns;
+    return "";
   }, [staffProfile?.work_patterns]);
+
   const paidLeave = staffProfile?.paid_leave_remaining;
 
   // 画面
@@ -349,12 +354,11 @@ export default function Home() {
                     </th>
                   );
                 })}
-                {/* 選択シフトタイプ欄は省略、work_patternsで */}
                 <th className="p-1 min-w-[32px] bg-slate-900 border-b border-slate-700 text-[8px]">合計</th>
               </tr>
             </thead>
             <tbody>
-              {displayStaffProfiles.map((profile) => {
+              {displayMembers.map((profile) => {
                 // 職種パース
                 let jobTitle = "";
                 if (profile.job_title) {
@@ -365,7 +369,7 @@ export default function Home() {
                     jobTitle = String(profile.job_title);
                   }
                 }
-                // パターン（work_patterns）はJSON配列
+                // パターン（work_patterns）はJSON配列。配列ならkey, nameで形作る
                 let patterns: { key: string, name: string }[] = [];
                 if (profile.work_patterns) {
                   try {
@@ -403,18 +407,14 @@ export default function Home() {
                     </td>
                     {days.map(d => {
                       const info = getDayInfo(d);
-                      // YYYY-MM-DD
                       const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
                       let shiftValue = shiftMap?.[profile.id]?.[dayStr] ?? "";
-                      // 編集可否: いまは予定モード && ログイン中のみ
                       const editable = viewMode === "plan" && !!loggedInName;
-
                       if (
                         editingShift &&
                         editingShift.staff_id === profile.id &&
                         editingShift.date === dayStr
                       ) {
-                        // 編集セルを表示（勤務パターンのselect）
                         return (
                           <td
                             key={d}
@@ -493,9 +493,8 @@ export default function Home() {
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
-                      {/* 各職員の勤務種類を合算する。 ここは代表的なものだけ。 */}
                       {["日", "早", "遅", "夜"].map(type => {
-                        const count = displayStaffProfiles.filter(n => {
+                        const count = displayMembers.filter(n => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
                           return shiftMap?.[n.id]?.[dayStr] === type;
                         }).length;
@@ -508,7 +507,6 @@ export default function Home() {
                     </div>
                   </td>
                 ))}
-                {/* 合計欄ダミー */}
                 <td className="!bg-slate-900 border-slate-700"></td>
               </tr>
             </tfoot>
