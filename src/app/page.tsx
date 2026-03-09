@@ -1,13 +1,11 @@
 "use client";
 import React, { useState, useEffect, useMemo } from 'react';
-import { useShiftManager, ViewMode } from './useShiftManager';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// staff_masterの型
 type StaffMasterProfile = {
   id: string;
   staff_name: string;
@@ -18,33 +16,31 @@ type StaffMasterProfile = {
   paid_leave_remaining: number | null;
 };
 
-type StaffMasterProfileFull = StaffMasterProfile & {
-  // expand for future use
+type ShiftRecord = {
+  id: number;
+  staff_id: string; // staff_master.id
+  date: string; // e.g. '2026-02-01'
+  shift_type: string | null;
+  mode: string; // 'plan' or 'actual'
 };
 
 export default function Home() {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
-  const [viewMode, setViewMode] = useState<ViewMode>("plan");
-  const [newStaffName, setNewStaffName] = useState("");
-  // アクセストークンを state に持たせる
+
+  // パラメータ取得とログイン者確認
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  // staff_master情報
   const [staffProfile, setStaffProfile] = useState<StaffMasterProfile | null>(null);
-  // 管理している部署ID
   const [departmentId, setDepartmentId] = useState<number | null>(null);
 
-  // URLパラメータの解析: ?key=... を取得
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const key = params.get('key');
     setAccessToken(key ?? null);
   }, []);
 
-  // access_tokenがセットされたらstaff_masterと照合
   useEffect(() => {
     const fetchStaffMaster = async (token: string) => {
-      // staff_masterを検索
       const { data, error } = await supabase
         .from("staff_master")
         .select("*")
@@ -58,7 +54,6 @@ export default function Home() {
       setStaffProfile(data);
       setDepartmentId(data.department_id ?? null);
     };
-
     if (accessToken) {
       fetchStaffMaster(accessToken);
     } else {
@@ -67,15 +62,64 @@ export default function Home() {
     }
   }, [accessToken]);
 
-  // useShiftManager から値を取る
-  const {
-    staffMembers, shifts, actualShifts, addStaff, removeStaff,
-    saveShift, autoGenerate, copyToActual, resetMonth, getShiftKey, getHopeKey
-  } = useShiftManager(year, month);
+  // 部署内全職員取得
+  const [departmentStaffProfiles, setDepartmentStaffProfiles] = useState<StaffMasterProfile[]>([]);
+  useEffect(() => {
+    const fetchDepartmentStaffProfiles = async () => {
+      if (departmentId && departmentId > 0) {
+        const { data, error } = await supabase
+          .from("staff_master")
+          .select("*")
+          .eq("department_id", departmentId)
+          .order("staff_name", { ascending: true });
+        setDepartmentStaffProfiles(!error && data ? data : []);
+      } else {
+        setDepartmentStaffProfiles([]);
+      }
+    };
+    fetchDepartmentStaffProfiles();
+  }, [departmentId]);
 
+  // シフト実績取得（ログインしていれば部署全員分を取得する）
+  const [shiftRecords, setShiftRecords] = useState<ShiftRecord[]>([]);
+  const [viewMode, setViewMode] = useState<'plan' | 'actual'>("plan");
+  useEffect(() => {
+    const fetchShifts = async () => {
+      if (!departmentId || departmentId <= 0) {
+        setShiftRecords([]);
+        return;
+      }
+      // 該当月の日付範囲を作成
+      const d1 = new Date(year, month - 1, 1);
+      const d2 = new Date(year, month, 0);
+      const startDate = d1.toISOString().slice(0, 10);
+      const endDate = d2.toISOString().slice(0, 10);
+
+      // 対象staff_idだけを抽出
+      const staffIds = departmentStaffProfiles.map((s) => s.id);
+      if (staffIds.length === 0) {
+        setShiftRecords([]);
+        return;
+      }
+
+      // supabaseクエリ
+      const { data, error } = await supabase
+        .from("shifts")
+        .select("*")
+        .in("staff_id", staffIds)
+        .gte("date", startDate)
+        .lte("date", endDate)
+        .eq("mode", viewMode);
+
+      setShiftRecords(!error && data ? data : []);
+    };
+    fetchShifts();
+    // departmentStaffProfiles を依存に含めると staffIdリストをさらに早く反映
+  }, [departmentId, viewMode, year, month, departmentStaffProfiles]);
+
+  // 日付配列
   const daysInMonth = new Date(year, month, 0).getDate();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-  const currentData = viewMode === "plan" ? shifts : actualShifts;
 
   const shiftTypes = [
     { key: "日", label: "日勤", color: "text-slate-800" },
@@ -100,80 +144,46 @@ export default function Home() {
     };
   };
 
-  const handleAddStaff = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newStaffName.trim()) {
-      addStaff(newStaffName.trim());
-      setNewStaffName("");
-    }
-  };
-
-  // --- ここから修正: staff_master から部署職員を取得 ---
-  // 部署全員の staff_master レコードを取得
-  const [departmentStaffProfiles, setDepartmentStaffProfiles] = useState<StaffMasterProfileFull[]>([]);
-  useEffect(() => {
-    const fetchDepartmentStaffProfiles = async () => {
-      if (departmentId && departmentId > 0) {
-        const { data, error } = await supabase
-          .from("staff_master")
-          .select("*")
-          .eq("department_id", departmentId)
-          .order("staff_name", { ascending: true });
-        if (!error && data) {
-          setDepartmentStaffProfiles(data);
-        } else {
-          setDepartmentStaffProfiles([]);
-        }
-      } else {
-        setDepartmentStaffProfiles([]);
-      }
-    };
-    fetchDepartmentStaffProfiles();
-  }, [departmentId]);
-  // -------------------------------------------------------
-
-  // 表の職員一覧: ログインしていれば部署全員, していなければ従来通り
+  // シフト表示テーブルを部署モードのみ（ログイン時のみ）に限定
   const displayStaffProfiles = useMemo(() => {
     if (departmentId && departmentId > 0) {
       return departmentStaffProfiles;
     }
-    // 管理者/未ログイン時: 旧staffMembers名のみで仮の StaffMasterProfile を生成
-    return staffMembers.map((name) => ({
-      id: "",
-      staff_name: name,
-      access_token: "",
-      job_title: null,
-      department_id: null,
-      work_patterns: null,
-      paid_leave_remaining: null,
-    }));
-  }, [departmentId, departmentStaffProfiles, staffMembers]);
+    // 未ログイン時は空配列表示
+    return [];
+  }, [departmentId, departmentStaffProfiles]);
 
-  // 画面右上にログイン中の職員の情報を表示
+  // シフトデータへ高速アクセス用Map（staff_id->date->shift_type）
+  const shiftMap: { [staffId: string]: { [date: string]: string | null } } = {};
+  shiftRecords.forEach((rec) => {
+    if (!shiftMap[rec.staff_id]) shiftMap[rec.staff_id] = {};
+    shiftMap[rec.staff_id][rec.date] = rec.shift_type;
+  });
+
+  // ログイン情報（右上）
   const loggedInName = staffProfile?.staff_name;
+  // 職種解釈
   const loggedInJob = React.useMemo(() => {
-    // 職種オブジェクト対応
     if (!staffProfile?.job_title) return "";
     try {
-      // job_titleがJSON（たとえば {"name": "介護", "label": "care"} ）の場合、parseして .name または .label を出す
       const parsed = JSON.parse(staffProfile.job_title);
       if (parsed && (parsed.name || parsed.label)) {
         return parsed.name || parsed.label;
       }
     } catch {
-      // 普通の文字列
       return staffProfile.job_title;
     }
     return staffProfile.job_title;
   }, [staffProfile?.job_title]);
+  // パターン解釈：JSON配列を正しく解釈し、[object Object]の回避
   const loggedInPatterns = React.useMemo(() => {
     if (!staffProfile?.work_patterns) return "";
     try {
       const parsed = JSON.parse(staffProfile.work_patterns);
       if (Array.isArray(parsed)) {
-        // 例: [{"name":"早番"},{"name":"遅番"}]
-        return parsed.map((x) => x.name || x.label).filter(Boolean).join(",");
-      } else if (parsed && (parsed.name || parsed.label)) {
+        return parsed.map((x: any) => x?.name || x?.label).filter(Boolean).join(",");
+      }
+      if (parsed && (parsed.name || parsed.label)) {
         return parsed.name || parsed.label;
       }
     } catch {
@@ -185,13 +195,13 @@ export default function Home() {
 
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
-      {/* 1. ヘッダー：追加機能などを集約 */}
+      {/* 1. ヘッダー */}
       <div className="flex-none p-4 md:p-6 pb-2">
         <header className="flex flex-col gap-3">
           <div className="flex justify-between items-center">
             <h1 className="text-xl font-black text-blue-900 tracking-tight">勤務表 Pro v2</h1>
             <div className="flex gap-2 items-center">
-              {/* ログイン時はログインユーザ名＋部署を表示 */}
+              {/* ログイン表示 */}
               {loggedInName && (
                 <div className="flex flex-col items-end mr-2">
                   <span className="text-sm text-blue-700 font-bold" title={loggedInName}>
@@ -203,7 +213,7 @@ export default function Home() {
                     )}
                   </span>
                   <span className="text-xs text-gray-700 font-normal">
-                    {loggedInJob ?? ""} {loggedInPatterns ? `(${loggedInPatterns})` : ""}
+                    {loggedInJob} {loggedInPatterns ? `(${loggedInPatterns})` : ""}
                   </span>
                   {typeof paidLeave === "number" && (
                     <span className="text-xs text-pink-600 font-bold">
@@ -212,70 +222,27 @@ export default function Home() {
                   )}
                 </div>
               )}
-              {viewMode === "plan" && (
-                <button
-                  onClick={async () => {
-                    const success = await copyToActual();
-                    if (success) {
-                      alert("予定を実績にコピーしました。実績確定画面で確認してください。");
-                    }
-                  }}
-                  className="bg-green-600 text-white px-2 py-1.5 rounded text-[10px] font-bold shadow-sm"
-                >
-                  実績反映
-                </button>
-              )}
               <button
                 onClick={() => setViewMode("plan")}
                 className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow-lg" : "bg-white border"}`}
               >予定</button>
-              {!loggedInName && (
-                <button
-                  onClick={() => setViewMode("actual")}
-                  className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}
-                >実績</button>
-              )}
+              <button
+                onClick={() => setViewMode("actual")}
+                className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}
+              >実績</button>
             </div>
           </div>
-
-          {!loggedInName && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
-              <div className="flex gap-2 items-center">
-                <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="font-bold border rounded-md p-1.5 bg-slate-50 text-sm">
-                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
-                </select>
-                <form onSubmit={handleAddStaff} className="flex flex-1 gap-1">
-                  <input
-                    type="text" value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)}
-                    placeholder="職員名..." className="flex-1 border rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <button type="submit" className="bg-slate-800 text-white px-3 py-1.5 rounded-md text-xs font-bold shrink-0">追加</button>
-                </form>
-              </div>
-              <div className="flex items-center gap-2 justify-between">
-                <div className="flex gap-1 overflow-x-auto pb-1 max-w-[200px]">
-                  {staffMembers.map(name => (
-                    <a key={name} href={`?user=${name}`} className="text-[9px] bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-100 shrink-0">{name}</a>
-                  ))}
-                </div>
-                <div className="flex gap-1">
-                  <button onClick={() => autoGenerate(daysInMonth)} className="bg-blue-500 text-white px-2 py-1.5 rounded text-[10px] font-bold">自動</button>
-                  <button onClick={() => resetMonth(viewMode, daysInMonth)} className="bg-red-50 text-red-600 px-2 py-1.5 rounded border border-red-100 text-[10px]">消去</button>
-                </div>
-              </div>
-            </div>
-          )}
         </header>
       </div>
 
-      {/* 2. テーブルエリア：ここが肝心 */}
+      {/* 2. テーブル本体 */}
       <div className="flex-1 overflow-hidden px-2 md:px-6 pb-4">
         <div className="h-full w-full overflow-auto border rounded-xl shadow-2xl bg-white relative border-separate">
           <table className="border-separate border-spacing-0 min-w-full">
             <thead className="sticky top-0 z-[100]">
               <tr className="text-white text-[10px] text-center font-bold">
-                <th className="sticky left-0 top-0 z-[110] bg-slate-900 p-3 min-w-[110px] border-b border-r border-slate-700">
-                  職員名
+                <th className="sticky left-0 top-0 z-[110] bg-slate-900 p-3 min-w-[140px] border-b border-r border-slate-700">
+                  職員名 / 職種
                 </th>
                 {days.map(d => {
                   const info = getDayInfo(d);
@@ -292,10 +259,7 @@ export default function Home() {
             </thead>
             <tbody>
               {displayStaffProfiles.map((profile) => {
-                const name = profile.staff_name;
-                const isDisabled = !!loggedInName && loggedInName !== name;
-
-                // 職種とパターン表示用
+                // 職種パース
                 let jobTitle = "";
                 if (profile.job_title) {
                   try {
@@ -305,14 +269,15 @@ export default function Home() {
                     jobTitle = String(profile.job_title);
                   }
                 }
+                // パターン（work_patterns）はJSON配列
                 let patterns = "";
                 if (profile.work_patterns) {
                   try {
                     const parsed = JSON.parse(profile.work_patterns);
                     if (Array.isArray(parsed)) {
                       patterns = parsed.map((x: any) => x?.name || x?.label).filter(Boolean).join(",");
-                    } else {
-                      patterns = parsed?.name || parsed?.label || String(profile.work_patterns);
+                    } else if (parsed && (parsed.name || parsed.label)) {
+                      patterns = parsed.name || parsed.label;
                     }
                   } catch {
                     patterns = String(profile.work_patterns);
@@ -320,19 +285,11 @@ export default function Home() {
                 }
 
                 return (
-                  <tr key={name} className="h-11">
-                    <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all ${isDisabled ? "text-slate-300" : "text-slate-800"} min-w-[110px] w-[110px]`}>
+                  <tr key={profile.id || profile.staff_name} className="h-11">
+                    <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all text-slate-800 min-w-[140px] w-[140px]`}>
                       <div className="flex flex-col">
-                        {/* 名 + 職種/パターン（小） */}
-                        <div className="flex items-center justify-between">
-                          <button
-                            onClick={() => { if (!isDisabled) removeStaff(name); }}
-                            className={`text-red-300 hover:text-red-500 transition-colors shrink-0 ${isDisabled ? "invisible" : ""}`}
-                          >✕</button>
-                          <span className="truncate ml-1">{name}</span>
-                        </div>
-                        {/* 職種/パターン表示（職員追加時も見えるようにする） */}
-                        <span className="text-[10px] text-gray-500 font-normal ml-5">
+                        <span className="truncate ml-1">{profile.staff_name}</span>
+                        <span className="text-[10px] text-gray-500 font-normal ml-1">
                           {jobTitle}
                           {patterns ? ` (${patterns})` : ""}
                         </span>
@@ -340,24 +297,23 @@ export default function Home() {
                     </td>
                     {days.map(d => {
                       const info = getDayInfo(d);
-                      const isHope = currentData[getHopeKey(name, d)] === "true";
+
+                      // YYYY-MM-DD
+                      const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+                      let shiftValue = shiftMap?.[profile.id]?.[dayStr] ?? "";
+
                       return (
-                        <td key={d} className={`border-r border-b border-slate-100 text-center ${info.bgColor} ${isHope && viewMode === "plan" ? "!bg-yellow-100" : ""}`}>
-                          <select
-                            value={currentData[getShiftKey(name, d)] || ""}
-                            disabled={isDisabled}
-                            onChange={(e) => saveShift(name, d, e.target.value, viewMode, !!loggedInName)}
-                            className="w-full text-center h-9 bg-transparent outline-none appearance-none cursor-pointer text-[11px]"
-                          >
-                            <option value="">-</option>
-                            {shiftTypes.map(t => <option key={t.key} value={t.key}>{t.key}</option>)}
-                          </select>
+                        <td key={d} className={`border-r border-b border-slate-100 text-center ${info.bgColor}`}>
+                          {shiftValue ? shiftValue : "-"}
                         </td>
                       );
                     })}
                     {shiftTypes.map(t => (
                       <td key={t.key} className={`border-b border-slate-200 text-center font-bold bg-slate-50 ${t.color} text-[10px]`}>
-                        {days.filter(d => currentData[getShiftKey(name, d)] === t.key).length}
+                        {days.filter(d => {
+                          const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+                          return shiftMap?.[profile.id]?.[dayStr] === t.key;
+                        }).length}
                       </td>
                     ))}
                   </tr>
@@ -366,14 +322,17 @@ export default function Home() {
             </tbody>
             <tfoot className="sticky bottom-0 z-[100]">
               <tr className="bg-slate-900 text-white font-bold h-14 shadow-[0_-4px_10px_rgba(0,0,0,0.3)]">
-                <td className="sticky left-0 z-[110] !bg-slate-900 p-2 border-r border-slate-700 text-center text-xs uppercase tracking-tighter min-w-[110px]">
+                <td className="sticky left-0 z-[110] !bg-slate-900 p-2 border-r border-slate-700 text-center text-xs uppercase tracking-tighter min-w-[140px]">
                   合計
                 </td>
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
                       {["日", "早", "遅", "夜"].map(type => {
-                        const count = displayStaffProfiles.filter(n => currentData[getShiftKey(n.staff_name, d)] === type).length;
+                        const count = displayStaffProfiles.filter(n => {
+                          const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+                          return shiftMap?.[n.id]?.[dayStr] === type;
+                        }).length;
                         return count > 0 ? (
                           <span key={type} className={`text-[11px] leading-tight ${type === "早" ? "text-orange-400" : type === "遅" ? "text-purple-400" : type === "夜" ? "text-blue-400" : "text-white"}`}>
                             {type}:{count}
