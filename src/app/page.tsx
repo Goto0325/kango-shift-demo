@@ -1,17 +1,21 @@
 "use client";
 import React, { useState, useEffect, useMemo } from 'react';
 import { useShiftManager, ViewMode } from './useShiftManager';
-// supabase のクライアントを import（自分のプロジェクトに合わせてください）
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-type UserProfile = {
+// staff_masterの型
+type StaffMasterProfile = {
   id: string;
-  name: string;
-  department_id: number;
+  staff_name: string;
+  access_token: string;
+  job_title: string | null;
+  department_id: number | null;
+  work_patterns: string | null;
+  paid_leave_remaining: number | null;
 };
 
 export default function Home() {
@@ -21,63 +25,47 @@ export default function Home() {
   const [newStaffName, setNewStaffName] = useState(""); // 追加機能を復活
   // アクセストークンを state に持たせる
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
+  // staff_master情報
+  const [staffProfile, setStaffProfile] = useState<StaffMasterProfile | null>(null);
+  // 管理している部署ID
   const [departmentId, setDepartmentId] = useState<number | null>(null);
 
-  // URLパラメータの解析: ?key=... がある場合は access_token として扱う
+  // URLパラメータの解析: ?key=... を取得
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const key = params.get('key');
-    const user = params.get('user'); // fallbackで未対応の人用
-
-    if (key) {
-      setAccessToken(key);
-    } else if (user) {
-      // fallback: 非ログイン制御(userクエリ)
-      setCurrentUserProfile({
-        id: '',
-        name: user,
-        department_id: -1,
-      });
-      setDepartmentId(null);
-    }
+    setAccessToken(key ?? null);
   }, []);
 
-  // access_tokenがセットされた場合にSupabase認証・プロファイル取得
+  // access_tokenがセットされたらstaff_masterと照合
   useEffect(() => {
-    const fetchProfile = async (token: string) => {
-      // 認証(userオブジェクト取得)
-      const { data: { user }, error } = await supabase.auth.getUser(token);
-      if (error || !user) {
-        setCurrentUserProfile(null);
+    const fetchStaffMaster = async (token: string) => {
+      // staff_masterを検索
+      const { data, error } = await supabase
+        .from("staff_master")
+        .select("*")
+        .eq("access_token", token)
+        .single();
+      if (error || !data) {
+        setStaffProfile(null);
         setDepartmentId(null);
         return;
       }
-
-      // profileテーブルなどから名前・部署を取得（usersテーブル前提。異なる場合は適宜修正）
-      // 例: users テーブルに name, department_id があると仮定
-      const { data: profile, error: pErr } = await supabase
-        .from("users")
-        .select("id, name, department_id")
-        .eq("id", user.id)
-        .single();
-      if (profile && !pErr) {
-        setCurrentUserProfile(profile);
-        setDepartmentId(profile.department_id);
-      } else {
-        setCurrentUserProfile(null);
-        setDepartmentId(null);
-      }
+      setStaffProfile(data);
+      setDepartmentId(data.department_id ?? null);
     };
 
     if (accessToken) {
-      fetchProfile(accessToken);
+      fetchStaffMaster(accessToken);
+    } else {
+      setStaffProfile(null);
+      setDepartmentId(null);
     }
   }, [accessToken]);
 
   // useShiftManager から値を取る
   const {
-    staffMembers, shifts, actualShifts, addStaff, removeStaff, 
+    staffMembers, shifts, actualShifts, addStaff, removeStaff,
     saveShift, autoGenerate, copyToActual, resetMonth, getShiftKey, getHopeKey
   } = useShiftManager(year, month);
 
@@ -117,22 +105,19 @@ export default function Home() {
   };
 
   // 部署で staffMembers をフィルタ
-  // staffMembers 配列を department_id でフィルタリングするロジックが必要。
-  // 現状 useShiftManager から配列取得だが、各staffのdepartment_idが必要。
-  // 仮のサンプルとして「databaseから職員リスト取得」もやる例
-
+  // staff_master配列を使い、department_id でフィルタ
   const [departmentStaffs, setDepartmentStaffs] = useState<string[]>([]);
   // departmentIdが決まったら、そのidのstaffのみ取得
   useEffect(() => {
     const fetchDepartmentStaffs = async () => {
       if (departmentId !== null && departmentId !== undefined && departmentId > 0) {
-        // 例: usersテーブルの"department_id"が一致する staff_nameのみ抽出
+        // staff_masterテーブルの"department_id"が一致する staff_nameのみ抽出
         const { data, error } = await supabase
-          .from("users")
-          .select("name")
+          .from("staff_master")
+          .select("staff_name")
           .eq("department_id", departmentId);
         if (!error && data) {
-          setDepartmentStaffs(data.map((x: { name: string }) => x.name));
+          setDepartmentStaffs(data.map((x: { staff_name: string }) => x.staff_name));
         } else {
           setDepartmentStaffs([]);
         }
@@ -151,8 +136,11 @@ export default function Home() {
     return staffMembers.filter(s => departmentStaffs.includes(s));
   }, [staffMembers, departmentStaffs, departmentId]);
 
-  // 画面上で表示するユーザ名
-  const loggedInName = currentUserProfile?.name;
+  // 画面右上にログイン中の職員の情報を表示
+  const loggedInName = staffProfile?.staff_name;
+  const loggedInJob = staffProfile?.job_title;
+  const loggedInPatterns = staffProfile?.work_patterns;
+  const paidLeave = staffProfile?.paid_leave_remaining;
 
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
@@ -164,31 +152,47 @@ export default function Home() {
             <div className="flex gap-2 items-center">
               {/* ログイン時はログインユーザ名＋部署を表示 */}
               {loggedInName && (
-                <span className="text-sm text-blue-700 font-bold mr-2" title={loggedInName}>
-                  {loggedInName}さん
-                  {departmentId && departmentId > 0 && (
-                    <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
-                      部署{departmentId}
+                <div className="flex flex-col items-end mr-2">
+                  <span className="text-sm text-blue-700 font-bold" title={loggedInName}>
+                    {loggedInName}さん
+                    {staffProfile?.department_id && staffProfile.department_id > 0 && (
+                      <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                        部署{staffProfile.department_id}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-xs text-gray-700 font-normal">
+                    {loggedInJob ?? ""} {loggedInPatterns ? `(${loggedInPatterns})` : ""}
+                  </span>
+                  {typeof paidLeave === "number" && (
+                    <span className="text-xs text-pink-600 font-bold">
+                      有給残: {paidLeave}
                     </span>
                   )}
-                </span>
+                </div>
               )}
               {viewMode === "plan" && (
-                <button 
+                <button
                   onClick={async () => {
                     const success = await copyToActual();
                     if (success) {
                       alert("予定を実績にコピーしました。実績確定画面で確認してください。");
                     }
-                  }} 
+                  }}
                   className="bg-green-600 text-white px-2 py-1.5 rounded text-[10px] font-bold shadow-sm"
                 >
                   実績反映
                 </button>
               )}
-              <button onClick={() => setViewMode("plan")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow-lg" : "bg-white border"}`}>予定</button>
+              <button
+                onClick={() => setViewMode("plan")}
+                className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow-lg" : "bg-white border"}`}
+              >予定</button>
               {!loggedInName && (
-                <button onClick={() => setViewMode("actual")} className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}>実績</button>
+                <button
+                  onClick={() => setViewMode("actual")}
+                  className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}
+                >実績</button>
               )}
             </div>
           </div>
@@ -197,10 +201,10 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-white p-3 rounded-xl shadow-sm border border-slate-200">
               <div className="flex gap-2 items-center">
                 <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="font-bold border rounded-md p-1.5 bg-slate-50 text-sm">
-                  {Array.from({length: 12}, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}月</option>)}
                 </select>
                 <form onSubmit={handleAddStaff} className="flex flex-1 gap-1">
-                  <input 
+                  <input
                     type="text" value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)}
                     placeholder="職員名..." className="flex-1 border rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -224,14 +228,11 @@ export default function Home() {
       </div>
 
       {/* 2. テーブルエリア：ここが肝心 */}
-      {/* 2. テーブルエリア：ここを「基準」として作り直しました */}
       <div className="flex-1 overflow-hidden px-2 md:px-6 pb-4">
-        {/* 親要素に relative を付け、overflow-auto でスクロールの基準を明確にします */}
         <div className="h-full w-full overflow-auto border rounded-xl shadow-2xl bg-white relative border-separate">
           <table className="border-separate border-spacing-0 min-w-full">
             <thead className="sticky top-0 z-[100]">
               <tr className="text-white text-[10px] text-center font-bold">
-                {/* 1列目ヘッダー：ここも固定必須 */}
                 <th className="sticky left-0 top-0 z-[110] bg-slate-900 p-3 min-w-[110px] border-b border-r border-slate-700">
                   職員名
                 </th>
@@ -253,11 +254,10 @@ export default function Home() {
                 const isDisabled = !!loggedInName && loggedInName !== name;
                 return (
                   <tr key={name} className="h-11">
-                    {/* 職員名セル：背景色を !bg-white で塗りつぶし、後ろを隠します */}
                     <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all ${isDisabled ? "text-slate-300" : "text-slate-800"} min-w-[110px] w-[110px]`}>
                       <div className="flex items-center justify-between">
-                        <button 
-                          onClick={() => { if (!isDisabled) removeStaff(name); }} 
+                        <button
+                          onClick={() => { if (!isDisabled) removeStaff(name); }}
                           className={`text-red-300 hover:text-red-500 transition-colors shrink-0 ${isDisabled ? "invisible" : ""}`}
                         >✕</button>
                         <span className="truncate ml-1">{name}</span>
@@ -268,10 +268,10 @@ export default function Home() {
                       const isHope = currentData[getHopeKey(name, d)] === "true";
                       return (
                         <td key={d} className={`border-r border-b border-slate-100 text-center ${info.bgColor} ${isHope && viewMode === "plan" ? "!bg-yellow-100" : ""}`}>
-                          <select 
-                            value={currentData[getShiftKey(name, d)] || ""} 
+                          <select
+                            value={currentData[getShiftKey(name, d)] || ""}
                             disabled={isDisabled}
-                            onChange={(e) => saveShift(name, d, e.target.value, viewMode, !!loggedInName)} 
+                            onChange={(e) => saveShift(name, d, e.target.value, viewMode, !!loggedInName)}
                             className="w-full text-center h-9 bg-transparent outline-none appearance-none cursor-pointer text-[11px]"
                           >
                             <option value="">-</option>
@@ -289,7 +289,6 @@ export default function Home() {
                 );
               })}
             </tbody>
-            {/* 合計行も左端を固定 */}
             <tfoot className="sticky bottom-0 z-[100]">
               <tr className="bg-slate-900 text-white font-bold h-14 shadow-[0_-4px_10px_rgba(0,0,0,0.3)]">
                 <td className="sticky left-0 z-[110] !bg-slate-900 p-2 border-r border-slate-700 text-center text-xs uppercase tracking-tighter min-w-[110px]">
@@ -301,7 +300,7 @@ export default function Home() {
                       {["日", "早", "遅", "夜"].map(type => {
                         const count = filteredStaffMembers.filter(n => currentData[getShiftKey(n, d)] === type).length;
                         return count > 0 ? (
-                          <span key={type} className={`text-[11px] leading-tight ${type==="早"?"text-orange-400":type==="遅"?"text-purple-400":type==="夜"?"text-blue-400":"text-white"}`}>
+                          <span key={type} className={`text-[11px] leading-tight ${type === "早" ? "text-orange-400" : type === "遅" ? "text-purple-400" : type === "夜" ? "text-blue-400" : "text-white"}`}>
                             {type}:{count}
                           </span>
                         ) : null;
