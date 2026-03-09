@@ -10,9 +10,9 @@ type StaffMasterProfile = {
   id: string;
   staff_name: string;
   access_token: string;
-  job_title: string | null;
-  department_id: number | null;
-  work_patterns: string | null;
+  job_title: string | object | null;
+  department_id: number | string | null;
+  work_patterns: string | object | any[] | null;
   paid_leave_remaining: number | null;
 };
 
@@ -31,7 +31,7 @@ export default function Home() {
   // ログイン/自身のプロファイル
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [staffProfile, setStaffProfile] = useState<StaffMasterProfile | null>(null);
-  const [departmentId, setDepartmentId] = useState<number | null>(null);
+  const [departmentId, setDepartmentId] = useState<number | string | null>(null);
 
   // メンバ一覧（表示の基礎とする）
   const [members, setMembers] = useState<StaffMasterProfile[]>([]);
@@ -55,7 +55,7 @@ export default function Home() {
         setDepartmentId(null);
         return;
       }
-      setStaffProfile(data);
+      setStaffProfile(data as StaffMasterProfile);
       setDepartmentId(data.department_id ?? null);
     };
     if (accessToken) {
@@ -69,38 +69,69 @@ export default function Home() {
   // 部署内全職員データ取得＋自分の行1行目ルール
   useEffect(() => {
     const fetchMembers = async () => {
-      if (departmentId && departmentId > 0) {
+      // departmentIdの型（数値または文字列）でチェック、null/undefined/0/空文字でなければ検索
+      const validDep =
+        departmentId !== null &&
+        departmentId !== undefined &&
+        departmentId !== "" &&
+        !(typeof departmentId === "number" && isNaN(departmentId)) &&
+        !(typeof departmentId === "number" && departmentId === 0) &&
+        !(typeof departmentId === "string" && (departmentId === "0" || departmentId.trim() === ""));
+
+      if (validDep) {
+        // 部署IDが有効
+        console.log("取得した部署ID:", departmentId);
         const { data, error } = await supabase
           .from("staff_master")
           .select("*")
           .eq("department_id", departmentId)
           .order("staff_name", { ascending: true });
 
+        console.log("マスタ取得結果:", data);
+
         if (!error && Array.isArray(data)) {
-          // Goto Tatsuki（ログイン者）取得&行頭挿入ロジック
           let membersArr = [...data];
+          // ログイン者をリスト先頭に
           if (staffProfile) {
-            const idx = membersArr.findIndex(s => s.id === staffProfile.id);
+            const idx = membersArr.findIndex((s: any) => s.id === staffProfile.id);
             if (idx >= 0) {
-              // 既にリスト内なら先頭へ
               const [me] = membersArr.splice(idx, 1);
               membersArr = [me, ...membersArr];
             }
           }
-          setMembers(membersArr);
-          if (membersArr.length === 0) {
-            console.error("エラー: 部署の職員データが0件です。");
-          } else {
+          // データが0件の場合でも自分だけは表示
+          if (membersArr.length === 0 && staffProfile) {
+            setMembers([staffProfile]);
+            console.error("エラー: 部署の職員データが0件ですが、自分のみ表示します。");
+          } else if (membersArr.length > 0) {
+            setMembers(membersArr as StaffMasterProfile[]);
             console.log("表示する職員:", membersArr);
+          } else if (staffProfile) {
+            // 念のため、どんな場合でも自分いるなら自分のみ表示
+            setMembers([staffProfile]);
+          } else {
+            setMembers([]);
+            console.error("エラー: 部署の職員データが0件です。");
           }
         } else {
-          setMembers([]);
-          console.error("エラー: 部署の職員データ取得失敗または0件です。");
+          // 読み込み失敗や謎データも自分だけは表示
+          if (staffProfile) {
+            setMembers([staffProfile]);
+            console.error("エラー: 部署の職員データ取得失敗または0件ですが、自分のみ表示します。");
+          } else {
+            setMembers([]);
+            console.error("エラー: 部署の職員データ取得失敗または0件です。");
+          }
         }
       } else {
-        setMembers([]);
+        // departmentIdが未指定や不正な場合
         if (departmentId !== null) {
           console.error("エラー: 部署ID指定が不正です。");
+        }
+        if (staffProfile) {
+          setMembers([staffProfile]);
+        } else {
+          setMembers([]);
         }
       }
     };
@@ -113,7 +144,14 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<'plan' | 'actual'>("plan");
   useEffect(() => {
     const fetchShifts = async () => {
-      if (!departmentId || departmentId <= 0) {
+      const validDep =
+        departmentId !== null &&
+        departmentId !== undefined &&
+        departmentId !== "" &&
+        !(typeof departmentId === "number" && isNaN(departmentId)) &&
+        !(typeof departmentId === "number" && departmentId === 0) &&
+        !(typeof departmentId === "string" && (departmentId === "0" || departmentId.trim() === ""));
+      if (!validDep) {
         setShiftRecords([]);
         return;
       }
@@ -122,7 +160,10 @@ export default function Home() {
       const startDate = d1.toISOString().slice(0, 10);
       const endDate = d2.toISOString().slice(0, 10);
 
-      const staffIds = members.map((s) => s.id);
+      let staffIds = members.map((s) => s.id);
+      if (staffIds.length === 0 && staffProfile?.id) {
+        staffIds = [staffProfile.id];
+      }
       if (staffIds.length === 0) {
         setShiftRecords([]);
         return;
@@ -138,8 +179,7 @@ export default function Home() {
       setShiftRecords(!error && data ? data : []);
     };
     fetchShifts();
-    // 'members' の変更も監視
-  }, [departmentId, viewMode, year, month, members]);
+  }, [departmentId, viewMode, year, month, members, staffProfile?.id]);
 
   // 日付配列
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -231,7 +271,10 @@ export default function Home() {
       const d2 = new Date(year, month, 0);
       const startDate = d1.toISOString().slice(0, 10);
       const endDate = d2.toISOString().slice(0, 10);
-      const staffIds = members.map((s) => s.id);
+      let staffIds = members.map((s) => s.id);
+      if (staffIds.length === 0 && staffProfile?.id) {
+        staffIds = [staffProfile.id];
+      }
       const { data: refreshed, error: refError } = await supabase
         .from("shifts")
         .select("*")
@@ -263,34 +306,64 @@ export default function Home() {
 
   // ログイン情報（右上）
   const loggedInName = staffProfile?.staff_name;
-  // 職種解釈
-  const loggedInJob = React.useMemo(() => {
+
+  // 職種解釈（型の柔軟性確保）
+  const loggedInJob = useMemo(() => {
     if (!staffProfile?.job_title) return "";
-    try {
-      const parsed = JSON.parse(staffProfile.job_title);
-      if (parsed && (parsed.name || parsed.label)) {
-        return parsed.name || parsed.label;
+    if (typeof staffProfile.job_title === "string") {
+      try {
+        const parsed = JSON.parse(staffProfile.job_title);
+        if (parsed && typeof parsed === "object" && (parsed.name || parsed.label)) {
+          return parsed.name || parsed.label;
+        }
+      } catch {
+        return staffProfile.job_title;
       }
-    } catch {
       return staffProfile.job_title;
     }
-    return staffProfile.job_title;
+    if (typeof staffProfile.job_title === "object" && staffProfile.job_title !== null) {
+      if ((staffProfile.job_title as any).name) {
+        return (staffProfile.job_title as any).name;
+      }
+      if ((staffProfile.job_title as any).label) {
+        return (staffProfile.job_title as any).label;
+      }
+      return JSON.stringify(staffProfile.job_title);
+    }
+    return String(staffProfile.job_title);
   }, [staffProfile?.job_title]);
 
   // パターン解釈: 配列から name だけjoinして画面右上 [object Object] を防ぐ
-  const loggedInPatterns = React.useMemo(() => {
+  const loggedInPatterns = useMemo(() => {
     if (!staffProfile?.work_patterns) return "";
-    try {
-      const parsed = JSON.parse(staffProfile.work_patterns);
-      if (Array.isArray(parsed)) {
-        // nameでjoinし、null/undefinedは除外
-        return parsed.map((x: any) => x?.name).filter(Boolean).join(",");
+    if (typeof staffProfile.work_patterns === "string") {
+      try {
+        const parsed = JSON.parse(staffProfile.work_patterns);
+        if (Array.isArray(parsed)) {
+          return parsed.map((x: any) => x?.name || x?.label || x?.key).filter(Boolean).join(",");
+        }
+        if (parsed && typeof parsed === "object" && (parsed.name || parsed.label || parsed.key)) {
+          return parsed.name || parsed.label || parsed.key;
+        }
+      } catch {
+        return staffProfile.work_patterns;
       }
-      if (parsed && typeof parsed === "object" && (parsed.name || parsed.label)) {
-        return parsed.name || parsed.label;
-      }
-    } catch {
       return "";
+    }
+    if (Array.isArray(staffProfile.work_patterns)) {
+      return staffProfile.work_patterns
+        .map((x: any) => x?.name || x?.label || x?.key).filter(Boolean).join(",");
+    }
+    if (
+      typeof staffProfile.work_patterns === "object" &&
+      staffProfile.work_patterns !== null &&
+      ((staffProfile.work_patterns as any).name || (staffProfile.work_patterns as any).label || (staffProfile.work_patterns as any).key)
+    ) {
+      return (
+        (staffProfile.work_patterns as any).name ||
+        (staffProfile.work_patterns as any).label ||
+        (staffProfile.work_patterns as any).key
+      );
     }
     return "";
   }, [staffProfile?.work_patterns]);
@@ -298,7 +371,7 @@ export default function Home() {
   const paidLeave = staffProfile?.paid_leave_remaining;
 
   // デバッグ
-  React.useEffect(() => {
+  useEffect(() => {
     if (members.length === 0) {
       console.error("エラー: 表示する職員データが0件です。");
     } else {
@@ -319,7 +392,7 @@ export default function Home() {
                 <div className="flex flex-col items-end mr-2">
                   <span className="text-sm text-blue-700 font-bold" title={loggedInName}>
                     {loggedInName}さん
-                    {staffProfile?.department_id && staffProfile.department_id > 0 && (
+                    {staffProfile?.department_id && Number(staffProfile.department_id) > 0 && (
                       <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
                         部署{staffProfile.department_id}
                       </span>
@@ -373,33 +446,63 @@ export default function Home() {
                 // 職種パース
                 let jobTitle = "";
                 if (profile.job_title) {
-                  try {
-                    const parsed = JSON.parse(profile.job_title);
-                    jobTitle = parsed?.name || parsed?.label || String(profile.job_title);
-                  } catch {
+                  if (typeof profile.job_title === "string") {
+                    try {
+                      const parsed = JSON.parse(profile.job_title);
+                      jobTitle = parsed?.name || parsed?.label || String(profile.job_title);
+                    } catch {
+                      jobTitle = String(profile.job_title);
+                    }
+                  } else if (typeof profile.job_title === "object" && profile.job_title !== null) {
+                    jobTitle =
+                      (profile.job_title as any).name ||
+                      (profile.job_title as any).label ||
+                      JSON.stringify(profile.job_title);
+                  } else {
                     jobTitle = String(profile.job_title);
                   }
                 }
+
                 // パターン（work_patterns）はJSON配列。配列ならkey, nameで形作る
                 let patterns: { key: string, name: string }[] = [];
                 if (profile.work_patterns) {
-                  try {
-                    const parsed = JSON.parse(profile.work_patterns);
-                    if (Array.isArray(parsed)) {
-                      patterns = parsed
-                        .map((x: any) => ({
-                          key: (x?.key || x?.name || x?.label || '').toString(),
-                          name: (x?.name || x?.label || x?.key || '').toString()
-                        }))
-                        .filter(x => x.key && x.name);
-                    } else if (parsed && (parsed.name || parsed.label || parsed.key)) {
-                      patterns = [{
-                        key: (parsed.key || parsed.name || parsed.label).toString(),
-                        name: (parsed.name || parsed.label || parsed.key).toString()
-                      }];
+                  if (typeof profile.work_patterns === "string") {
+                    try {
+                      const parsed = JSON.parse(profile.work_patterns);
+                      if (Array.isArray(parsed)) {
+                        patterns = parsed
+                          .map((x: any) => ({
+                            key: (x?.key || x?.name || x?.label || '').toString(),
+                            name: (x?.name || x?.label || x?.key || '').toString()
+                          }))
+                          .filter(x => x.key && x.name);
+                      } else if (parsed && typeof parsed === "object" && (parsed.name || parsed.label || parsed.key)) {
+                        patterns = [{
+                          key: (parsed.key || parsed.name || parsed.label).toString(),
+                          name: (parsed.name || parsed.label || parsed.key).toString()
+                        }];
+                      }
+                    } catch {
+                      patterns = [];
                     }
-                  } catch {
-                    patterns = [];
+                  } else if (Array.isArray(profile.work_patterns)) {
+                    patterns = (profile.work_patterns as any[]).map((x: any) => ({
+                      key: (x?.key || x?.name || x?.label || '').toString(),
+                      name: (x?.name || x?.label || x?.key || '').toString()
+                    })).filter(x => x.key && x.name);
+                  } else if (
+                    typeof profile.work_patterns === "object" &&
+                    profile.work_patterns !== null &&
+                    (
+                      (profile.work_patterns as any).name ||
+                      (profile.work_patterns as any).label ||
+                      (profile.work_patterns as any).key
+                    )
+                  ) {
+                    patterns = [{
+                      key: ((profile.work_patterns as any).key || (profile.work_patterns as any).name || (profile.work_patterns as any).label).toString(),
+                      name: ((profile.work_patterns as any).name || (profile.work_patterns as any).label || (profile.work_patterns as any).key).toString(),
+                    }];
                   }
                 }
 
