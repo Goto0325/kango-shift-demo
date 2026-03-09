@@ -18,11 +18,15 @@ type StaffMasterProfile = {
   paid_leave_remaining: number | null;
 };
 
+type StaffMasterProfileFull = StaffMasterProfile & {
+  // expand for future use
+};
+
 export default function Home() {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
   const [viewMode, setViewMode] = useState<ViewMode>("plan");
-  const [newStaffName, setNewStaffName] = useState(""); // 追加機能を復活
+  const [newStaffName, setNewStaffName] = useState("");
   // アクセストークンを state に持たせる
   const [accessToken, setAccessToken] = useState<string | null>(null);
   // staff_master情報
@@ -104,42 +108,79 @@ export default function Home() {
     }
   };
 
-  // 部署で staffMembers をフィルタ
-  // staff_master配列を使い、department_id でフィルタ
-  const [departmentStaffs, setDepartmentStaffs] = useState<string[]>([]);
-  // departmentIdが決まったら、そのidのstaffのみ取得
+  // --- ここから修正: staff_master から部署職員を取得 ---
+  // 部署全員の staff_master レコードを取得
+  const [departmentStaffProfiles, setDepartmentStaffProfiles] = useState<StaffMasterProfileFull[]>([]);
   useEffect(() => {
-    const fetchDepartmentStaffs = async () => {
-      if (departmentId !== null && departmentId !== undefined && departmentId > 0) {
-        // staff_masterテーブルの"department_id"が一致する staff_nameのみ抽出
+    const fetchDepartmentStaffProfiles = async () => {
+      if (departmentId && departmentId > 0) {
         const { data, error } = await supabase
           .from("staff_master")
-          .select("staff_name")
-          .eq("department_id", departmentId);
+          .select("*")
+          .eq("department_id", departmentId)
+          .order("staff_name", { ascending: true });
         if (!error && data) {
-          setDepartmentStaffs(data.map((x: { staff_name: string }) => x.staff_name));
+          setDepartmentStaffProfiles(data);
         } else {
-          setDepartmentStaffs([]);
+          setDepartmentStaffProfiles([]);
         }
       } else {
-        setDepartmentStaffs([]);
+        setDepartmentStaffProfiles([]);
       }
     };
-    fetchDepartmentStaffs();
+    fetchDepartmentStaffProfiles();
   }, [departmentId]);
+  // -------------------------------------------------------
 
-  // staffMembers を departmentStaffs で絞る
-  const filteredStaffMembers = useMemo(() => {
-    // ログインなし→すべて表示
-    if (!departmentId || departmentId <= 0) return staffMembers;
-    // ログインあり→部署のみ
-    return staffMembers.filter(s => departmentStaffs.includes(s));
-  }, [staffMembers, departmentStaffs, departmentId]);
+  // 表の職員一覧: ログインしていれば部署全員, していなければ従来通り
+  const displayStaffProfiles = useMemo(() => {
+    if (departmentId && departmentId > 0) {
+      return departmentStaffProfiles;
+    }
+    // 管理者/未ログイン時: 旧staffMembers名のみで仮の StaffMasterProfile を生成
+    return staffMembers.map((name) => ({
+      id: "",
+      staff_name: name,
+      access_token: "",
+      job_title: null,
+      department_id: null,
+      work_patterns: null,
+      paid_leave_remaining: null,
+    }));
+  }, [departmentId, departmentStaffProfiles, staffMembers]);
 
   // 画面右上にログイン中の職員の情報を表示
   const loggedInName = staffProfile?.staff_name;
-  const loggedInJob = staffProfile?.job_title;
-  const loggedInPatterns = staffProfile?.work_patterns;
+  const loggedInJob = React.useMemo(() => {
+    // 職種オブジェクト対応
+    if (!staffProfile?.job_title) return "";
+    try {
+      // job_titleがJSON（たとえば {"name": "介護", "label": "care"} ）の場合、parseして .name または .label を出す
+      const parsed = JSON.parse(staffProfile.job_title);
+      if (parsed && (parsed.name || parsed.label)) {
+        return parsed.name || parsed.label;
+      }
+    } catch {
+      // 普通の文字列
+      return staffProfile.job_title;
+    }
+    return staffProfile.job_title;
+  }, [staffProfile?.job_title]);
+  const loggedInPatterns = React.useMemo(() => {
+    if (!staffProfile?.work_patterns) return "";
+    try {
+      const parsed = JSON.parse(staffProfile.work_patterns);
+      if (Array.isArray(parsed)) {
+        // 例: [{"name":"早番"},{"name":"遅番"}]
+        return parsed.map((x) => x.name || x.label).filter(Boolean).join(",");
+      } else if (parsed && (parsed.name || parsed.label)) {
+        return parsed.name || parsed.label;
+      }
+    } catch {
+      return staffProfile.work_patterns;
+    }
+    return staffProfile.work_patterns;
+  }, [staffProfile?.work_patterns]);
   const paidLeave = staffProfile?.paid_leave_remaining;
 
   return (
@@ -250,17 +291,51 @@ export default function Home() {
               </tr>
             </thead>
             <tbody>
-              {filteredStaffMembers.map(name => {
+              {displayStaffProfiles.map((profile) => {
+                const name = profile.staff_name;
                 const isDisabled = !!loggedInName && loggedInName !== name;
+
+                // 職種とパターン表示用
+                let jobTitle = "";
+                if (profile.job_title) {
+                  try {
+                    const parsed = JSON.parse(profile.job_title);
+                    jobTitle = parsed?.name || parsed?.label || String(profile.job_title);
+                  } catch {
+                    jobTitle = String(profile.job_title);
+                  }
+                }
+                let patterns = "";
+                if (profile.work_patterns) {
+                  try {
+                    const parsed = JSON.parse(profile.work_patterns);
+                    if (Array.isArray(parsed)) {
+                      patterns = parsed.map((x: any) => x?.name || x?.label).filter(Boolean).join(",");
+                    } else {
+                      patterns = parsed?.name || parsed?.label || String(profile.work_patterns);
+                    }
+                  } catch {
+                    patterns = String(profile.work_patterns);
+                  }
+                }
+
                 return (
                   <tr key={name} className="h-11">
                     <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all ${isDisabled ? "text-slate-300" : "text-slate-800"} min-w-[110px] w-[110px]`}>
-                      <div className="flex items-center justify-between">
-                        <button
-                          onClick={() => { if (!isDisabled) removeStaff(name); }}
-                          className={`text-red-300 hover:text-red-500 transition-colors shrink-0 ${isDisabled ? "invisible" : ""}`}
-                        >✕</button>
-                        <span className="truncate ml-1">{name}</span>
+                      <div className="flex flex-col">
+                        {/* 名 + 職種/パターン（小） */}
+                        <div className="flex items-center justify-between">
+                          <button
+                            onClick={() => { if (!isDisabled) removeStaff(name); }}
+                            className={`text-red-300 hover:text-red-500 transition-colors shrink-0 ${isDisabled ? "invisible" : ""}`}
+                          >✕</button>
+                          <span className="truncate ml-1">{name}</span>
+                        </div>
+                        {/* 職種/パターン表示（職員追加時も見えるようにする） */}
+                        <span className="text-[10px] text-gray-500 font-normal ml-5">
+                          {jobTitle}
+                          {patterns ? ` (${patterns})` : ""}
+                        </span>
                       </div>
                     </td>
                     {days.map(d => {
@@ -298,7 +373,7 @@ export default function Home() {
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
                       {["日", "早", "遅", "夜"].map(type => {
-                        const count = filteredStaffMembers.filter(n => currentData[getShiftKey(n, d)] === type).length;
+                        const count = displayStaffProfiles.filter(n => currentData[getShiftKey(n.staff_name, d)] === type).length;
                         return count > 0 ? (
                           <span key={type} className={`text-[11px] leading-tight ${type === "早" ? "text-orange-400" : type === "遅" ? "text-purple-400" : type === "夜" ? "text-blue-400" : "text-white"}`}>
                             {type}:{count}
