@@ -242,16 +242,23 @@ export default function Home() {
     });
   };
 
-  // セル保存: 選択した瞬間に保存（onChangeのみ、保存・キャンセルボタンなし）
+  // セル保存: 選択を確定したときのみ handleSave を走らせ、保存・表示更新・計算まで統合
   const handleSave = async (staff_id: string, date: string, value: string) => {
-    if (
-      viewMode !== "plan" ||
-      !departmentId
-    ) return;
+    // 安全: planのみ、departmentIdありのみ
+    if (viewMode !== "plan" || !departmentId) return;
     setIsSaving(true);
-    try {
+
+    // ↓ pattern_key チェック
+    const isValidPatternKey =
+      value === "" || allPatterns.some(pt => pt.pattern_key === value);
+    if (!isValidPatternKey) {
+      setIsSaving(false);
       setEditingShift(null);
-      let changedRecords = [...shiftRecords];
+      return;
+    }
+
+    try {
+      let changedRecords: ShiftRecord[] = [...shiftRecords];
       const idx = changedRecords.findIndex(
         s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
       );
@@ -282,8 +289,13 @@ export default function Home() {
           changedRecords.push(data);
         }
       }
+      // 保存＆編集解除
       setShiftRecords(changedRecords);
-    } catch {}
+      setEditingShift(null);
+      // isSavingは finally
+    } catch {
+      setEditingShift(null);
+    }
     setIsSaving(false);
   };
 
@@ -502,7 +514,6 @@ export default function Home() {
                       const editable = viewMode === "plan" && !!loggedInName;
                       const isEditing = editingShift && editingShift.staff_id === profile.id && editingShift.date === dayStr;
 
-                      // セル編集/表示切り替え
                       if (isEditing) {
                         return (
                           <td
@@ -514,9 +525,10 @@ export default function Home() {
                               value={shiftValue || ""}
                               autoFocus
                               disabled={isSaving}
-                              // 変更＝即保存
+                              // onChange：プルダウンの選択を確定・保存できる形に修正
                               onChange={async (e) => {
                                 const v = e.target.value;
+                                // 保存する値が pattern_key であることを確認し、保存
                                 await handleSave(profile.id, dayStr, v);
                               }}
                               onClick={e => e.stopPropagation()}
@@ -531,6 +543,7 @@ export default function Home() {
                         );
                       }
 
+                      // 編集モードのトリガー: セルクリックで必ず編集状態になる
                       return (
                         <td
                           key={d}
