@@ -1,19 +1,18 @@
 "use client";
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// 型定義修正
 type StaffMasterProfile = {
   id: string;
   staff_name: string;
   access_token: string;
   job_title: string | object | null;
   department_id: number | string | null;
-  work_patterns: number[] | null; // 修正: number[] | null
+  work_patterns: number[] | null;
   paid_leave_remaining: number | null;
 };
 
@@ -21,12 +20,12 @@ type ShiftRecord = {
   id: number;
   staff_id: string;
   date: string;
-  shift_type: string | null; // pattern_key が入る
+  shift_type: string | null;
   mode: string;
 };
 
 type ShiftPattern = {
-  id: number; // INTEGER
+  id: number;
   pattern_name: string;
   pattern_key: string;
   work_hours: number;
@@ -36,18 +35,12 @@ export default function Home() {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
 
-  // ログイン/自身のプロファイル
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [staffProfile, setStaffProfile] = useState<StaffMasterProfile | null>(null);
   const [departmentId, setDepartmentId] = useState<number | string | null>(null);
-
-  // メンバ一覧
   const [members, setMembers] = useState<StaffMasterProfile[]>([]);
-
-  // パターン: allPatterns = shift_patternsから全件を保持
   const [allPatterns, setAllPatterns] = useState<ShiftPattern[]>([]);
 
-  // shift_patterns マスタ 一度だけ取得
   useEffect(() => {
     const fetchShiftPatterns = async () => {
       const { data, error } = await supabase
@@ -75,7 +68,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    // ログインユーザー認証・情報取得
     const fetchStaffMaster = async (token: string) => {
       const { data, error } = await supabase
         .from("staff_master")
@@ -99,10 +91,8 @@ export default function Home() {
       setStaffProfile(null);
       setDepartmentId(null);
     }
-    // eslint-disable-next-line
   }, [accessToken]);
 
-  // 部署内全職員データ取得＋自分の行1行目ルール
   useEffect(() => {
     const fetchMembers = async () => {
       const validDep =
@@ -118,13 +108,11 @@ export default function Home() {
           .select("*")
           .eq("department_id", departmentId)
           .order("staff_name", { ascending: true });
-
         if (!error && Array.isArray(data)) {
           let membersArr = [...data].map((row: any) => ({
             ...row,
             work_patterns: safeParseIntArray(row.work_patterns),
           }));
-
           if (staffProfile) {
             const idx = membersArr.findIndex((s: any) => s.id === staffProfile.id);
             if (idx >= 0) {
@@ -156,12 +144,9 @@ export default function Home() {
         }
       }
     };
-
     fetchMembers();
-    // eslint-disable-next-line
   }, [departmentId, staffProfile]);
 
-  // シフト実績取得
   const [shiftRecords, setShiftRecords] = useState<ShiftRecord[]>([]);
   const [viewMode, setViewMode] = useState<'plan' | 'actual'>("plan");
   useEffect(() => {
@@ -181,7 +166,6 @@ export default function Home() {
       const d2 = new Date(year, month, 0);
       const startDate = d1.toISOString().slice(0, 10);
       const endDate = d2.toISOString().slice(0, 10);
-
       let staffIds = members.map((s) => s.id);
       if (staffIds.length === 0 && staffProfile?.id) {
         staffIds = [staffProfile.id];
@@ -197,14 +181,11 @@ export default function Home() {
         .gte("date", startDate)
         .lte("date", endDate)
         .eq("mode", viewMode);
-
       setShiftRecords(!error && data ? data : []);
     };
     fetchShifts();
-    // eslint-disable-next-line
   }, [departmentId, viewMode, year, month, members, staffProfile?.id]);
 
-  // 日付配列
   const daysInMonth = new Date(year, month, 0).getDate();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
@@ -226,7 +207,6 @@ export default function Home() {
     shiftMap[rec.staff_id][rec.date] = rec.shift_type;
   });
 
-  // 編集シフト選択状態
   const [editingShift, setEditingShift] = useState<{
     staff_id: string;
     date: string;
@@ -234,7 +214,22 @@ export default function Home() {
 
   const [isSaving, setIsSaving] = useState(false);
 
-  // 「編集」開始（セルをクリックで編集状態に）
+  // 編集セルの select DOM ref を記録する（フォーカス制御のため）
+  const selectRef = useRef<HTMLSelectElement | null>(null);
+
+  // 編集モード時、自動的にプルダウンにフォーカスを当てる
+  useEffect(() => {
+    if (editingShift && selectRef.current) {
+      // setTimeoutで親レンダ後に実行
+      setTimeout(() => {
+        try {
+          selectRef.current?.focus();
+        } catch (e) {}
+      }, 1);
+    }
+  }, [editingShift]);
+
+  // 編集開始
   const handleCellEdit = (staff_id: string, date: string) => {
     setEditingShift({
       staff_id,
@@ -244,10 +239,8 @@ export default function Home() {
 
   // セル保存: 選択を確定したときのみ handleSave を走らせ、保存・表示更新・計算まで統合
   const handleSave = async (staff_id: string, date: string, value: string) => {
-    // 安全: planのみ、departmentIdありのみ
     if (viewMode !== "plan" || !departmentId) return;
     setIsSaving(true);
-
     // ↓ pattern_key チェック
     const isValidPatternKey =
       value === "" || allPatterns.some(pt => pt.pattern_key === value);
@@ -256,7 +249,6 @@ export default function Home() {
       setEditingShift(null);
       return;
     }
-
     try {
       let changedRecords: ShiftRecord[] = [...shiftRecords];
       const idx = changedRecords.findIndex(
@@ -289,17 +281,15 @@ export default function Home() {
           changedRecords.push(data);
         }
       }
-      // 保存＆編集解除
       setShiftRecords(changedRecords);
       setEditingShift(null);
-      // isSavingは finally
     } catch {
       setEditingShift(null);
     }
     setIsSaving(false);
   };
 
-  // 外部クリックで編集解除（選択UIでは出さないのでほぼ不要）
+  // 外部クリック/blurで編集解除：但しプルダウン選択中は発火しない（onMouseDown伝播止めにて実現）
   useEffect(() => {
     if (!editingShift) return;
     const handler = (e: MouseEvent) => {
@@ -309,10 +299,8 @@ export default function Home() {
     return () => window.removeEventListener("click", handler, { capture: true });
   }, [editingShift]);
 
-  // ログイン情報（右上）
   const loggedInName = staffProfile?.staff_name;
 
-  // 職種解釈（型の柔軟性確保）
   const loggedInJob = useMemo(() => {
     if (!staffProfile?.job_title) return "";
     if (typeof staffProfile.job_title === "string") {
@@ -338,7 +326,6 @@ export default function Home() {
     return String(staffProfile.job_title);
   }, [staffProfile?.job_title]);
 
-  // パターン名の文字列化（右上表示用）
   const loggedInPatterns = useMemo(() => {
     if (!staffProfile?.work_patterns || !Array.isArray(staffProfile.work_patterns)) return "";
     const patterns = allPatterns.filter(pt =>
@@ -349,16 +336,13 @@ export default function Home() {
 
   const paidLeave = staffProfile?.paid_leave_remaining;
 
-  // work_patternsが配列で返らない場合用 セーフパース
   function safeParseIntArray(wp: any): number[] | null {
     if (!wp) return null;
     if (Array.isArray(wp)) {
       return wp.map(Number).filter(v => !isNaN(v));
     }
     if (typeof wp === "string") {
-      // パターン: '{1,2,3}'、'[1,2,3]'、"1,2,3"
       if (wp.startsWith('{') && wp.endsWith('}')) {
-        // '{1,2,3}'
         return wp
           .slice(1, -1)
           .split(',')
@@ -373,14 +357,12 @@ export default function Home() {
           }
         } catch {}
       }
-      // カンマ区切り: "1,2,3"
       if (wp.includes(',')) {
         return wp
           .split(',')
           .map(s => Number(s.trim()))
           .filter(v => !isNaN(v));
       }
-      // 数値1つだけ
       if (!isNaN(Number(wp))) {
         return [Number(wp)];
       }
@@ -388,7 +370,6 @@ export default function Home() {
     return null;
   }
 
-  // パターン絞り込み: 各ユーザごとに使える勤務パターンを返す
   function getAvailablePatterns(profile: StaffMasterProfile): ShiftPattern[] {
     const ids = profile?.work_patterns;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return [];
@@ -403,7 +384,6 @@ export default function Home() {
           <div className="flex justify-between items-center">
             <h1 className="text-xl font-black text-blue-900 tracking-tight">勤務表 Pro v2</h1>
             <div className="flex gap-2 items-center">
-              {/* ログイン表示 */}
               {loggedInName && (
                 <div className="flex flex-col items-end mr-2">
                   <span className="text-sm text-blue-700 font-bold" title={loggedInName}>
@@ -436,8 +416,6 @@ export default function Home() {
           </div>
         </header>
       </div>
-
-      {/* 2. テーブル本体 */}
       <div className="flex-1 overflow-hidden px-2 md:px-6 pb-4">
         <div className="h-full w-full overflow-auto border rounded-xl shadow-2xl bg-white relative border-separate">
           <table className="border-separate border-spacing-0 min-w-full">
@@ -459,7 +437,6 @@ export default function Home() {
             </thead>
             <tbody>
               {members.map((profile) => {
-                // 職種パース
                 let jobTitle = "";
                 if (profile.job_title) {
                   if (typeof profile.job_title === "string") {
@@ -479,13 +456,9 @@ export default function Home() {
                   }
                 }
 
-                // 勤務パターン - 指定ID一覧のみ
                 const availablePatterns = getAvailablePatterns(profile);
 
-                // 合計勤務時間
                 let totalHours = 0;
-
-                // 右端合計用: 各日ごとの pattern_key で合算
                 days.forEach(d => {
                   const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
                   const shiftKey = shiftMap?.[profile.id]?.[dayStr];
@@ -514,25 +487,37 @@ export default function Home() {
                       const editable = viewMode === "plan" && !!loggedInName;
                       const isEditing = editingShift && editingShift.staff_id === profile.id && editingShift.date === dayStr;
 
+                      // 固定key属性(レンダ安定化)
+                      const cellKey = `${profile.id}_${dayStr}`;
+
                       if (isEditing) {
                         return (
                           <td
-                            key={d}
+                            key={cellKey}
                             className={`border-r border-b border-slate-100 text-center ${info.bgColor} relative`}
                           >
                             <select
+                              ref={selectRef}
                               className="border px-2 py-1 rounded bg-white text-xs w-full"
                               value={shiftValue || ""}
-                              autoFocus
                               disabled={isSaving}
-                              // onChange：プルダウンの選択を確定・保存できる形に修正
+                              tabIndex={0}
+                              style={{ minWidth: 80 }}
+                              // onClickとonMouseDownで伝播停止
+                              onClick={e => e.stopPropagation()}
+                              onMouseDown={e => e.stopPropagation()}
+                              // onChangeで即保存→編集解除
                               onChange={async (e) => {
                                 const v = e.target.value;
-                                // 保存する値が pattern_key であることを確認し、保存
                                 await handleSave(profile.id, dayStr, v);
+                                setEditingShift(null); // handleSave内でも解除するが念のため
                               }}
-                              onClick={e => e.stopPropagation()}
-                              style={{ minWidth: 80 }}
+                              // onBlurで編集解除(ただし選択確定時はonChangeで解除済み)
+                              onBlur={e => {
+                                // イベント伝播を止めて外部クリックバブリング対策
+                                e.stopPropagation();
+                                setEditingShift(null);
+                              }}
                             >
                               <option value="">-</option>
                               {availablePatterns.map(pt => (
@@ -543,10 +528,9 @@ export default function Home() {
                         );
                       }
 
-                      // 編集モードのトリガー: セルクリックで必ず編集状態になる
                       return (
                         <td
-                          key={d}
+                          key={cellKey}
                           className={`border-r border-b border-slate-100 text-center cursor-pointer ${info.bgColor} transition hover:bg-blue-100 relative`}
                           tabIndex={0}
                           onClick={e => {
@@ -562,7 +546,6 @@ export default function Home() {
                         </td>
                       );
                     })}
-                    {/* 合計欄：合計勤務時間 */}
                     <td className="border-b border-slate-200 text-center font-bold bg-slate-50 text-[10px]">
                       {totalHours}
                     </td>
@@ -578,7 +561,6 @@ export default function Home() {
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
-                      {/* パターンキー x 人の合計数を表示。必要なら勤務時間合計なども可 */}
                       {allPatterns.map(pt => {
                         const count = members.filter(n => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
