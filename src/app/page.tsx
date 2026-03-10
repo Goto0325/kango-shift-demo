@@ -54,6 +54,17 @@ function getJobTitleString(jobTitle: StaffMasterProfile["job_title"]) {
   return "";
 }
 
+// 希望休・休み系のパターン名またはキーを判定（拡張可能）
+function isRestPattern(pattern: ShiftPattern | undefined): boolean {
+  if (!pattern) return false;
+  // パターン名やパターンキーに"休", "有給"が含まれるものを認定、適宜増やす
+  const restKeywords = ["休", "有給", "休日", "有休", "代休"];
+  return restKeywords.some(
+    k => (pattern.pattern_name && pattern.pattern_name.includes(k)) ||
+         (pattern.pattern_key && pattern.pattern_key.includes(k))
+  );
+}
+
 export default function Home() {
   // --- 「年」「月」のstate、初期値は2026年2月（既存のまま）
   const [year, setYear] = useState(2026);
@@ -297,6 +308,13 @@ export default function Home() {
     [staffProfile]
   );
 
+  // 管理者判定(true/false簡易変数)
+  const isAdmin = useMemo(() => {
+    if (!staffProfile) return false;
+    const jobTitleString = getJobTitleString(staffProfile.job_title);
+    return typeof jobTitleString === "string" && jobTitleString.includes("システム管理者");
+  }, [staffProfile]);
+
   // 編集開始
   const handleCellEdit = useCallback((staff_id: string, date: string) => {
     setEditingShift({
@@ -311,6 +329,13 @@ export default function Home() {
     async (staff_id: string, date: string, value: string) => {
       if (viewMode !== "plan" || !departmentId) return;
 
+      // 権限制御: 保存実行前にも念のため
+      if (!canEdit(staff_id)) {
+        setIsSaving(false);
+        setEditingShift(null);
+        return;
+      }
+
       setIsSaving(true);
       const isValidPatternKey = value === "" || allPatterns.some(pt => pt.pattern_key === value);
       if (!isValidPatternKey) {
@@ -321,36 +346,7 @@ export default function Home() {
 
       const newShiftType = value === "" ? null : value;
 
-      // 楽観的更新
-      setShiftRecords(prevRecords => {
-        const idx = prevRecords.findIndex(
-          s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
-        );
-        if (idx >= 0) {
-          // 上書き
-          return prevRecords.map((rec, i) =>
-            i === idx ? { ...rec, shift_type: newShiftType } : rec
-          );
-        } else if (newShiftType !== null) {
-          // 新規（idは仮で負数に）
-          return [
-            ...prevRecords,
-            {
-              id: Math.floor(Math.random() * -10000000),
-              staff_id,
-              date,
-              shift_type: newShiftType,
-              mode: "plan",
-            },
-          ];
-        } else {
-          // 空で新規指定時は変化なし（編集UIだけ閉じる）
-          return prevRecords;
-        }
-      });
-      setEditingShift(null);
-
-      // 保存: upsert（unique: [staff_id, date, mode] で既存なら更新・無ければinsert）
+      // 先にSupabase upsertで保存、戻り値でstate完全同期
       const upsertRows = [
         {
           staff_id,
@@ -362,16 +358,16 @@ export default function Home() {
       try {
         const { data, error } = await supabase
           .from("shifts")
-          .upsert(upsertRows, { onConflict: "staff_id,date,mode" }) // upsert by keys
+          .upsert(upsertRows, { onConflict: "staff_id,date,mode" }) // 完全同期UPSERT!
           .select();
         if (error) {
           console.error("Shift upsert error:", error);
         } else {
-          console.log("Shift upsert success:", data);
-          // サーバー応答からid等補正！（idなど確定情報で上書き）
+          // サーバー応答からid等補正！（idなど確定情報で上書き：全件リプレイス型）
           if (data && Array.isArray(data)) {
             setShiftRecords(prev => {
               // 置換（[staff_id, date, mode]が一致するものをサーバーの値で上書き）
+              // サーバーから戻った1件だけ更新または追加
               let replaced = [...prev];
               data.forEach((newRec: ShiftRecord) => {
                 const ix = replaced.findIndex(
@@ -385,7 +381,6 @@ export default function Home() {
                   replaced.push({ ...newRec });
                 }
               });
-              // またリロード時残ることを目視確認してください！
               return replaced;
             });
           }
@@ -393,8 +388,9 @@ export default function Home() {
       } finally {
         setIsSaving(false);
       }
+      setEditingShift(null);
     },
-    [viewMode, departmentId, allPatterns]
+    [viewMode, departmentId, allPatterns, canEdit]
   );
 
   const loggedInName = staffProfile?.staff_name;
@@ -511,7 +507,7 @@ export default function Home() {
   });
   CellSelect.displayName = "CellSelect";
 
-  // renderCell: 権限対応+UI制限
+  // renderCell: 権限対応+UI制限+希望休カラー
   const renderCell = useCallback(
     (
       profile: StaffMasterProfile,
@@ -527,11 +523,24 @@ export default function Home() {
       // 編集可否判定
       const allowEdit = editable && canEdit(profile.id);
 
+      // 管理者かどうか
+      // (外部変数isAdminを使う)
+
+      // 希望休「色」ロジック: 管理者・予定モード・休みパターン
+      let highlightBg = "";
+      if (isAdmin && viewMode === "plan" && shiftValue) {
+        const pat = allPatterns.find(p => p.pattern_key === shiftValue);
+        if (isRestPattern(pat)) {
+          // 強調色: 薄いピンク・オレンジ(例)
+          highlightBg = " bg-red-100";
+        }
+      }
+
       if (isEditing) {
         return (
           <td
             key={cellKey}
-            className={`border-r border-b border-slate-100 text-center ${info.bgColor} relative`}
+            className={`border-r border-b border-slate-100 text-center ${info.bgColor}${highlightBg} relative`}
           >
             <CellSelect
               value={shiftValue || ""}
@@ -557,7 +566,7 @@ export default function Home() {
       } else {
         cellClassBase += " cursor-not-allowed";
       }
-      cellClassBase += ` ${info.bgColor}`;
+      cellClassBase += ` ${info.bgColor}${highlightBg}`;
 
       return (
         <td
@@ -578,7 +587,7 @@ export default function Home() {
         </td>
       );
     },
-    [isSaving, handleSave, allPatterns, handleCellEdit, canEdit]
+    [isSaving, handleSave, allPatterns, handleCellEdit, canEdit, isAdmin, viewMode]
   );
 
   // ======== UI render ========
