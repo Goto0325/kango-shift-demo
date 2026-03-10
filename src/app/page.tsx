@@ -14,6 +14,7 @@ type StaffMasterProfile = {
   department_id: number | string | null;
   work_patterns: number[] | null;
   paid_leave_remaining: number | null;
+  employment_status?: string; // 追加: 雇用区分 (例：「常勤」/「非常勤」など)
 };
 
 type ShiftRecordV2 = {
@@ -225,6 +226,7 @@ export default function Home() {
           let membersArr = [...(data as any[])].map((row: any) => ({
             ...row,
             work_patterns: safeParseIntArray(row.work_patterns),
+            employment_status: (row as any).employment_status ?? undefined,
           }));
           if (staffProfile) {
             const idx = membersArr.findIndex((s: any) => s.id === staffProfile.id);
@@ -575,8 +577,6 @@ export default function Home() {
   function getAvailablePatterns(profile: StaffMasterProfile): ShiftPattern[] {
     const ids = profile?.work_patterns;
     if (!ids || !Array.isArray(ids) || ids.length === 0) return [];
-    // 「明」パターンのid: allPatternsから「pattern_key==='明'」もしくは「pattern_nameに"明け"含む」パターンを確認
-    // ただし、work_patternsに4が入っていればid=4がallPatternsにあり、必ず「明」パターンが含まれるはず
     return allPatterns.filter(pt => ids.includes(pt.id));
   }
 
@@ -726,6 +726,29 @@ export default function Home() {
     [isSaving, handleSave, allPatterns, handleCellEdit, canEdit, isAdmin, viewMode, staffProfile?.job_title, staffProfile?.staff_name, shiftMap]
   );
 
+  // ======== 公休ノルマ関連ロジック ========
+  // employment_statusが"常勤"なら、(8月・12月・1月 = 10日, その他 = 9日)のノルマ
+  const getHolidayQuota = (theYear: number, theMonth: number) => {
+    // 8月(8), 12月(12), 1月(1) => 10, 他は9
+    if (theMonth === 8 || theMonth === 12 || theMonth === 1) {
+      return 10;
+    }
+    return 9;
+  };
+
+  // シフト値が「休」と一致するものだけカウント
+  const countRestDays = (profile: StaffMasterProfile) => {
+    // この月の日付リスト
+    let count = 0;
+    for (let d = 1; d <= daysInMonth; ++d) {
+      const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+      const shiftVal = shiftMap?.[profile.staff_name]?.[dayStr]?.value;
+      // shift_type === '休'
+      if (shiftVal === "休") count++;
+    }
+    return count;
+  };
+
   // ======== 並び替え付き・職種間区切り付き members を計算 ========
   const sortedMembers = useMemo(() => {
     if (!members || members.length === 0) return [];
@@ -839,6 +862,7 @@ export default function Home() {
                 <th className="sticky left-0 top-0 z-[110] bg-slate-900 p-3 min-w-[140px] border-b border-r border-slate-700">
                   職員名 / 職種
                 </th>
+                <th className="bg-slate-900 border-b border-r border-slate-700 min-w-[50px] text-blue-200">公休</th>
                 {days.map(d => {
                   const info = getDayInfo(d);
                   return (
@@ -884,6 +908,28 @@ export default function Home() {
                   if (pat) totalHours += pat.work_hours;
                 });
 
+                // ==== 公休数/ノルマ判定 ====
+                const restCount = countRestDays(profile);
+
+                // employment_statusプロパティ取り出し
+                let empStatus = profile.employment_status;
+                // サーバー上でデータが存在しない既存データの場合、employment_status未定義も考慮するので、"常勤"として判定したい場合等は対応
+                if (typeof empStatus !== "string") empStatus = undefined;
+
+                const quota = empStatus === "常勤" ? getHolidayQuota(year, month) : undefined;
+
+                // 色判定
+                let quotaColor = "";
+                if (quota !== undefined) {
+                  if (restCount < quota) {
+                    quotaColor = "text-orange-500 font-bold";
+                  } else if (restCount === quota) {
+                    quotaColor = "text-blue-700 font-bold";
+                  } else if (restCount > quota) {
+                    quotaColor = "text-red-600 font-bold";
+                  }
+                }
+
                 // 職種間のボーダー判定: この行と次の行で職種カテゴリが違えば強い枠線
                 let borderClass = "";
                 const thisCategory = jobTitleCategory(profile.job_title);
@@ -916,6 +962,19 @@ export default function Home() {
                         </span>
                       </div>
                     </td>
+                    {/* 新列: 公休状況 */}
+                    <td className={`border-b border-r border-slate-200 text-center text-[12px] bg-slate-50 select-none ${quotaColor} ${borderClass}`} style={{ minWidth: 46, fontWeight: 'bold' }}>
+                      {quota !== undefined
+                        ? (
+                          <>
+                            {restCount} / {quota}
+                          </>
+                        )
+                        : (
+                          <>{restCount}</>
+                        )
+                      }
+                    </td>
                     {days.map(d => {
                       const info = getDayInfo(d);
                       const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
@@ -924,7 +983,6 @@ export default function Home() {
                       const editable = (viewMode === "plan") && !!loggedInName && canEdit(profile.id);
                       const isEditing = editingShift && editingShift.staff_name === profile.staff_name && editingShift.date === dayStr;
                       const cellKey = `${profile.staff_name}_${dayStr}`;
-                      // セル分けについてはそのまま
                       return renderCell(
                         profile,
                         d,
@@ -949,6 +1007,8 @@ export default function Home() {
                 <td className="sticky left-0 z-[110] !bg-slate-900 p-2 border-r border-slate-700 text-center text-xs uppercase tracking-tighter min-w-[140px]">
                   合計
                 </td>
+                {/* 公休 合計列は空/非表示 */}
+                <td className="!bg-slate-900 border-r border-slate-700"></td>
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
