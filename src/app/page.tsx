@@ -281,15 +281,7 @@ export default function Home() {
     [viewMode, departmentId, allPatterns, shiftRecords]
   );
 
-  // 外部クリック/blurで編集解除（プルダウンではリスナー不要になるので残すが、select自体のonBlurはsetTimeout遅延）
-  useEffect(() => {
-    if (!editingShift) return;
-    const handler = (e: MouseEvent) => {
-      setEditingShift(null);
-    };
-    window.addEventListener("click", handler, { capture: true });
-    return () => window.removeEventListener("click", handler, { capture: true });
-  }, [editingShift]);
+  // ★外部クリックイベントのグローバルuseEffectを削除：即座に閉じるバグ対策
 
   const loggedInName = staffProfile?.staff_name;
 
@@ -374,7 +366,7 @@ export default function Home() {
     options: ShiftPattern[];
     disabled: boolean;
     onChange: (v: string) => void;
-    onBlur: () => void;
+    onBlur: (e: React.FocusEvent<HTMLSelectElement>) => void;
   };
 
   const CellSelect = React.memo((props: CellSelectProps) => {
@@ -389,12 +381,18 @@ export default function Home() {
       }
     }, []);
 
-    // onBlurを数ms遅延実行（クリック伝播防止＆即時解除バグ回避用）
-    const handleBlurDelayed = useCallback((e: React.FocusEvent<HTMLSelectElement>) => {
+    // onBlurを e.relatedTarget で安全に処理（setTimeout廃止）
+    const handleBlurSafe = useCallback((e: React.FocusEvent<HTMLSelectElement>) => {
       e.stopPropagation();
-      setTimeout(() => {
-        onBlur();
-      }, 10);
+      if (
+        e.relatedTarget &&
+        (e.relatedTarget === selectRef.current ||
+          (e.relatedTarget as HTMLElement).tagName === 'OPTION')
+      ) {
+        // optionなどselect直下からのblurの場合は編集解除しない
+        return;
+      }
+      onBlur(e);
     }, [onBlur]);
 
     return (
@@ -406,13 +404,14 @@ export default function Home() {
         tabIndex={0}
         style={{ minWidth: 80 }}
         autoFocus
-        // onClickとonMouseDownで伝播停止
+        // onClickとonMouseDown, onMouseUpで伝播停止
         onClick={e => e.stopPropagation()}
         onMouseDown={e => e.stopPropagation()}
+        onMouseUp={e => e.stopPropagation()}
         // 即保存
         onChange={e => onChange(e.target.value)}
-        // onBlur時にはタイムアウトで解除
-        onBlur={handleBlurDelayed}
+        // onBlur時には e.relatedTarget を見てキャンセル
+        onBlur={handleBlurSafe}
       >
         <option value="">-</option>
         {options.map(pt => (
@@ -446,12 +445,14 @@ export default function Home() {
               value={shiftValue || ""}
               options={availablePatterns}
               disabled={isSaving}
+              // ↓onChange後に親から setEditingShift(null) を呼ぶ形に統一
               onChange={async (v) => {
                 await handleSave(profile.id, dayStr, v);
+                // セーブ完了後のみ編集解除
                 setEditingShift(null);
               }}
               onBlur={() => {
-                // 即時解除だとバグるのでsetTimeoutで遅らせる(詳細はCellSelect内)
+                // ブラー時のみ：setEditingShift(null)だが、onChange経由のときはそちらで解除
                 setEditingShift(null);
               }}
             />
