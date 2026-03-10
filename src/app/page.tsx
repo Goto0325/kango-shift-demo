@@ -16,12 +16,12 @@ type StaffMasterProfile = {
   paid_leave_remaining: number | null;
 };
 
-type ShiftRecord = {
-  id: number;
-  staff_id: string;
+type ShiftRecordV2 = {
+  id?: number; // DBから取得時はnumber, 新規ローカルはundefinedも許す
+  staff_name: string;
   date: string;
+  is_actual: boolean;
   shift_type: string | null;
-  mode: string;
 };
 
 type ShiftPattern = {
@@ -224,7 +224,7 @@ export default function Home() {
     fetchMembers();
   }, [departmentId, staffProfile]);
 
-  const [shiftRecords, setShiftRecords] = useState<ShiftRecord[]>([]);
+  const [shiftRecords, setShiftRecords] = useState<ShiftRecordV2[]>([]);
   const [viewMode, setViewMode] = useState<'plan' | 'actual'>("plan");
   useEffect(() => {
     const fetchShifts = async () => {
@@ -243,26 +243,39 @@ export default function Home() {
       const d2 = new Date(year, month, 0);
       const startDate = d1.toISOString().slice(0, 10);
       const endDate = d2.toISOString().slice(0, 10);
-      let staffIds = members.map((s) => s.id);
-      if (staffIds.length === 0 && staffProfile?.id) {
-        staffIds = [staffProfile.id];
+      let staffNames = members.map((s) => s.staff_name);
+      if (staffNames.length === 0 && staffProfile?.staff_name) {
+        staffNames = [staffProfile.staff_name];
       }
-      if (staffIds.length === 0) {
+      if (staffNames.length === 0) {
         setShiftRecords([]);
         return;
       }
       const { data, error } = await supabase
         .from("shifts")
         .select("*")
-        .in("staff_id", staffIds)
+        .in("staff_name", staffNames)
         .gte("date", startDate)
         .lte("date", endDate)
-        .eq("mode", viewMode);
-      setShiftRecords(!error && data ? (data as ShiftRecord[]) : []);
+        .eq("is_actual", viewMode === "actual");
+      // Ensure shape matches ShiftRecordV2
+      if (!error && Array.isArray(data)) {
+        setShiftRecords(
+          data.map((rec: any) => ({
+            id: rec.id,
+            staff_name: rec.staff_name,
+            date: rec.date,
+            is_actual: !!rec.is_actual,
+            shift_type: rec.shift_type,
+          }))
+        );
+      } else {
+        setShiftRecords([]);
+      }
     };
     // 年または月が変わるたびに自動で動作
     fetchShifts();
-  }, [departmentId, viewMode, year, month, members, staffProfile?.id]);
+  }, [departmentId, viewMode, year, month, members, staffProfile?.staff_name]);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -278,15 +291,18 @@ export default function Home() {
     };
   };
 
-  // シフトMap
-  const shiftMap: { [staffId: string]: { [date: string]: string | null } } = {};
-  shiftRecords.forEach((rec) => {
-    if (!shiftMap[rec.staff_id]) shiftMap[rec.staff_id] = {};
-    shiftMap[rec.staff_id][rec.date] = rec.shift_type;
-  });
+  // シフトMapを常に最新shiftRecordsから生成
+  const shiftMap: { [staffName: string]: { [date: string]: string | null } } = useMemo(() => {
+    const map: { [staffName: string]: { [date: string]: string | null } } = {};
+    shiftRecords.forEach((rec) => {
+      if (!map[rec.staff_name]) map[rec.staff_name] = {};
+      map[rec.staff_name][rec.date] = rec.shift_type;
+    });
+    return map;
+  }, [shiftRecords]);
 
   const [editingShift, setEditingShift] = useState<{
-    staff_id: string;
+    staff_name: string;
     date: string;
   } | null>(null);
 
@@ -297,12 +313,10 @@ export default function Home() {
   const canEdit = useCallback(
     (targetStaffId: string): boolean => {
       if (!staffProfile) return false;
-      // 管理者判定: job_titleを文字列化して、"システム管理者"が含まれているかで判定
       const jobTitleString = getJobTitleString(staffProfile.job_title);
       if (typeof jobTitleString === "string" && jobTitleString.includes("システム管理者")) {
         return true;
       }
-      // 一般: 自分自身のみ可
       return staffProfile.id === targetStaffId;
     },
     [staffProfile]
@@ -316,18 +330,21 @@ export default function Home() {
   }, [staffProfile]);
 
   // 編集開始
-  const handleCellEdit = useCallback((staff_id: string, date: string) => {
+  const handleCellEdit = useCallback((staff_name: string, date: string) => {
     setEditingShift({
-      staff_id,
+      staff_name,
       date,
     });
   }, []);
 
   // セル保存
-  // Supabase upsert対応: [staff_id, date, mode]でユニーク性
+  // Supabase upsert対応: [staff_name, date, is_actual]でユニーク性, 楽観的更新/エラー処理/カラム名マッチ
   const handleSave = useCallback(
     async (staff_id: string, date: string, value: string) => {
-      if (viewMode !== "plan" || !departmentId) return;
+      if (!departmentId) return;
+      const profile = members.find(m => m.id === staff_id);
+      if (!profile) return;
+      const staff_name = profile.staff_name;
 
       // 権限制御: 保存実行前にも念のため
       if (!canEdit(staff_id)) {
@@ -343,54 +360,79 @@ export default function Home() {
         setEditingShift(null);
         return;
       }
-
       const newShiftType = value === "" ? null : value;
+      const is_actual = viewMode === "actual";
 
-      // 先にSupabase upsertで保存、戻り値でstate完全同期
+      // 楽観的更新：shiftRecordsを先に更新
+      setShiftRecords((prev) => {
+        const keyMatch = (rec: ShiftRecordV2) =>
+          rec.staff_name === staff_name && rec.date === date && rec.is_actual === is_actual;
+        let replaced = [...prev];
+        const ix = replaced.findIndex(keyMatch);
+        if (ix >= 0) {
+          replaced[ix] = { ...replaced[ix], shift_type: newShiftType };
+        } else {
+          replaced.push({
+            staff_name,
+            date,
+            is_actual,
+            shift_type: newShiftType,
+          });
+        }
+        // React強制再描画: 新配列
+        return [...replaced];
+      });
+
+      // Supabase upsert: DBカラム完全一致、onConflictも一致
       const upsertRows = [
         {
-          staff_id,
+          staff_name,
           date,
+          is_actual,
           shift_type: newShiftType,
-          mode: "plan",
         }
       ];
+
       try {
         const { data, error } = await supabase
           .from("shifts")
-          .upsert(upsertRows, { onConflict: "staff_id,date,mode" }) // 完全同期UPSERT!
+          .upsert(upsertRows, { onConflict: 'staff_name,date,is_actual' })
           .select();
+
         if (error) {
+          // ここで alert で原因見せる
           console.error("Shift upsert error:", error);
-        } else {
-          // サーバー応答からid等補正！（idなど確定情報で上書き：全件リプレイス型）
-          if (data && Array.isArray(data)) {
-            setShiftRecords(prev => {
-              // 置換（[staff_id, date, mode]が一致するものをサーバーの値で上書き）
-              // サーバーから戻った1件だけ更新または追加
-              let replaced = [...prev];
-              data.forEach((newRec: ShiftRecord) => {
-                const ix = replaced.findIndex(
-                  r => r.staff_id === newRec.staff_id &&
-                       r.date === newRec.date &&
-                       r.mode === newRec.mode
-                );
-                if (ix >= 0) {
-                  replaced[ix] = { ...newRec };
-                } else {
-                  replaced.push({ ...newRec });
-                }
-              });
-              return replaced;
+          alert('保存に失敗しました: ' + error.message);
+        } else if (data && Array.isArray(data)) {
+          setShiftRecords((prev) => {
+            // サーバーからの確定値で更新
+            const keyMatch = (r: ShiftRecordV2, n: any) =>
+              r.staff_name === n.staff_name && r.date === n.date && r.is_actual === !!n.is_actual;
+            let replaced = [...prev];
+            data.forEach((newRec: any) => {
+              const ix = replaced.findIndex(r => keyMatch(r, newRec));
+              const cleaned = {
+                id: newRec.id,
+                staff_name: newRec.staff_name,
+                date: newRec.date,
+                is_actual: !!newRec.is_actual,
+                shift_type: newRec.shift_type,
+              };
+              if (ix >= 0) {
+                replaced[ix] = cleaned;
+              } else {
+                replaced.push(cleaned);
+              }
             });
-          }
+            return [...replaced];
+          });
         }
       } finally {
         setIsSaving(false);
       }
       setEditingShift(null);
     },
-    [viewMode, departmentId, allPatterns, canEdit]
+    [viewMode, departmentId, allPatterns, canEdit, members]
   );
 
   const loggedInName = staffProfile?.staff_name;
@@ -558,7 +600,6 @@ export default function Home() {
         );
       }
 
-      // 権限なし→hover/bg/cursor UI厳密制御
       let cellClassBase =
         "border-r border-b border-slate-100 text-center relative transition";
       if (allowEdit) {
@@ -568,6 +609,7 @@ export default function Home() {
       }
       cellClassBase += ` ${info.bgColor}${highlightBg}`;
 
+      // shiftValue取得: staff_nameで紐付け
       return (
         <td
           key={cellKey}
@@ -575,7 +617,7 @@ export default function Home() {
           tabIndex={0}
           onClick={e => {
             e.stopPropagation();
-            if (allowEdit) handleCellEdit(profile.id, dayStr);
+            if (allowEdit) handleCellEdit(profile.staff_name, dayStr);
           }}
           style={!allowEdit ? { pointerEvents: 'auto' } : undefined}
         >
@@ -684,7 +726,6 @@ export default function Home() {
             </thead>
             <tbody>
               {members.map((profile) => {
-                // 追加: 行の編集権限を判定
                 const rowCanEdit = !!loggedInName && canEdit(profile.id);
 
                 let jobTitle = "";
@@ -711,13 +752,12 @@ export default function Home() {
                 let totalHours = 0;
                 days.forEach(d => {
                   const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                  const shiftKey = shiftMap?.[profile.id]?.[dayStr];
+                  const shiftKey = shiftMap?.[profile.staff_name]?.[dayStr];
                   if (!shiftKey) return;
                   const pat = allPatterns.find(p => p.pattern_key === shiftKey);
                   if (pat) totalHours += pat.work_hours;
                 });
 
-                // ここで非編集行にグレーアウト("bg-slate-50", "text-gray-400")を追加
                 const trClassName =
                   "h-11" +
                   (!rowCanEdit
@@ -744,11 +784,10 @@ export default function Home() {
                     {days.map(d => {
                       const info = getDayInfo(d);
                       const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                      let shiftValue = shiftMap?.[profile.id]?.[dayStr] ?? "";
-                      const editable = viewMode === "plan" && !!loggedInName && canEdit(profile.id);
-                      const isEditing = editingShift && editingShift.staff_id === profile.id && editingShift.date === dayStr;
-                      const cellKey = `${profile.id}_${dayStr}`;
-                      // セルのグレーアウト: 行がグレーアウトの場合に、textの色を薄くする（追加するならこの中でclass追加）
+                      let shiftValue = shiftMap?.[profile.staff_name]?.[dayStr] ?? "";
+                      const editable = (viewMode === "plan") && !!loggedInName && canEdit(profile.id);
+                      const isEditing = editingShift && editingShift.staff_name === profile.staff_name && editingShift.date === dayStr;
+                      const cellKey = `${profile.staff_name}_${dayStr}`;
                       return renderCell(
                         profile,
                         d,
@@ -779,7 +818,7 @@ export default function Home() {
                       {allPatterns.map(pt => {
                         const count = members.filter(n => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                          return shiftMap?.[n.id]?.[dayStr] === pt.pattern_key;
+                          return shiftMap?.[n.staff_name]?.[dayStr] === pt.pattern_key;
                         }).length;
                         return count > 0 ? (
                           <span
