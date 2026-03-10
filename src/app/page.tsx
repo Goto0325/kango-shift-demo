@@ -675,6 +675,9 @@ export default function Home() {
             </thead>
             <tbody>
               {members.map((profile) => {
+                // 追加: 行の編集権限を判定
+                const rowCanEdit = !!loggedInName && canEdit(profile.id);
+
                 let jobTitle = "";
                 if (profile.job_title) {
                   if (typeof profile.job_title === "string") {
@@ -705,12 +708,23 @@ export default function Home() {
                   if (pat) totalHours += pat.work_hours;
                 });
 
+                // ここで非編集行にグレーアウト("bg-slate-50", "text-gray-400")を追加
+                const trClassName =
+                  "h-11" +
+                  (!rowCanEdit
+                    ? " bg-slate-50 text-gray-400"
+                    : "");
+
+                const staffNameTextClass = 'truncate ml-1' + (!rowCanEdit ? ' text-gray-400' : '');
+                const jobTitleClass = 'text-[10px] font-normal ml-1' +
+                  (rowCanEdit ? ' text-gray-500' : ' text-gray-400');
+
                 return (
-                  <tr key={profile.id || profile.staff_name} className="h-11">
-                    <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all text-slate-800 min-w-[140px] w-[140px]`}>
+                  <tr key={profile.id || profile.staff_name} className={trClassName}>
+                    <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all text-slate-800 min-w-[140px] w-[140px]${!rowCanEdit ? ' bg-slate-50 text-gray-400' : ''}`}>
                       <div className="flex flex-col">
-                        <span className="truncate ml-1">{profile.staff_name}</span>
-                        <span className="text-[10px] text-gray-500 font-normal ml-1">
+                        <span className={staffNameTextClass}>{profile.staff_name}</span>
+                        <span className={jobTitleClass}>
                           {jobTitle}
                           {availablePatterns.length > 0
                             ? ` (${availablePatterns.map(x => x.pattern_name).join(",")})`
@@ -725,6 +739,7 @@ export default function Home() {
                       const editable = viewMode === "plan" && !!loggedInName && canEdit(profile.id);
                       const isEditing = editingShift && editingShift.staff_id === profile.id && editingShift.date === dayStr;
                       const cellKey = `${profile.id}_${dayStr}`;
+                      // セルのグレーアウト: 行がグレーアウトの場合に、textの色を薄くする（追加するならこの中でclass追加）
                       return renderCell(
                         profile,
                         d,
@@ -737,7 +752,7 @@ export default function Home() {
                         cellKey
                       );
                     })}
-                    <td className="border-b border-slate-200 text-center font-bold bg-slate-50 text-[10px]">
+                    <td className={`border-b border-slate-200 text-center font-bold bg-slate-50 text-[10px]${!rowCanEdit ? ' text-gray-400' : ''}`}>
                       {totalHours}
                     </td>
                   </tr>
