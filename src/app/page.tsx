@@ -31,10 +31,54 @@ type ShiftPattern = {
   work_hours: number;
 };
 
+const MONTH_NAMES = [
+  "", "1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"
+];
+
 export default function Home() {
+  // --- 「年」「月」のstate、初期値は2026年2月（既存のまま）
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
 
+  // 月切り替え補助
+  const handlePrevMonth = useCallback(() => {
+    setMonth(prevMonth => {
+      if (prevMonth === 1) {
+        setYear(prevYear => prevYear - 1);
+        return 12;
+      }
+      return prevMonth - 1;
+    });
+  }, []);
+
+  const handleNextMonth = useCallback(() => {
+    setMonth(prevMonth => {
+      if (prevMonth === 12) {
+        setYear(prevYear => prevYear + 1);
+        return 1;
+      }
+      return prevMonth + 1;
+    });
+  }, []);
+
+  // 月ドロップダウン選択用
+  const handleMonthSelect = (newMonth: number) => {
+    setMonth(newMonth);
+  };
+
+  // 年ドロップダウンを追加する時は下記も拡張できる
+  // 保持する年の範囲を生成
+  const getYearOptions = () => {
+    // 通常は±5年くらい
+    const center = year;
+    const ys: number[] = [];
+    for (let d = -2; d <= 2; ++d) {
+      ys.push(center + d);
+    }
+    return ys;
+  };
+
+  // --- 既存
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [staffProfile, setStaffProfile] = useState<StaffMasterProfile | null>(null);
   const [departmentId, setDepartmentId] = useState<number | string | null>(null);
@@ -62,6 +106,7 @@ export default function Home() {
     fetchShiftPatterns();
   }, []);
 
+  // アクセストークンの保持: 月切り替えで消えないようstate依存なし、初回のみ取得
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const key = params.get('key');
@@ -74,7 +119,7 @@ export default function Home() {
         .from("staff_master")
         .select("*")
         .eq("access_token", token)
-        .maybeSingle(); // 修正: .single() → .maybeSingle()
+        .maybeSingle();
 
       if (error || !data) {
         setStaffProfile(null);
@@ -185,6 +230,7 @@ export default function Home() {
         .eq("mode", viewMode);
       setShiftRecords(!error && data ? (data as ShiftRecord[]) : []);
     };
+    // 年または月が変わるたびに自動で動作
     fetchShifts();
   }, [departmentId, viewMode, year, month, members, staffProfile?.id]);
 
@@ -265,7 +311,7 @@ export default function Home() {
         if (value !== "") {
           const newRec: ShiftRecord = {
             // idはとりあえず -1。Supabase登録後にもどこかで同期される
-            id: Math.floor(Math.random() * -10000000), // 一時ID（事故防止！たとえば重複しないように、小さく負）
+            id: Math.floor(Math.random() * -10000000),
             staff_id,
             date,
             shift_type: value,
@@ -275,7 +321,6 @@ export default function Home() {
           setShiftRecords([...optimisticRecords]);
           setEditingShift(null);
 
-          // Supabase側へinsert。本物のidが帰ってきたら（理想は同期できるとよいが、ここでは即時UI反映重視）
           supabase
             .from("shifts")
             .insert([
@@ -297,7 +342,6 @@ export default function Home() {
                     rec.mode === "plan"
                   );
                   if (idxTemp === -1) return prev;
-                  // 差し替えて新配列
                   const updated = [...prev];
                   updated[idxTemp] = { ...(data as ShiftRecord) };
                   return updated;
@@ -305,7 +349,6 @@ export default function Home() {
               }
             });
         } else {
-          // 空への変更かつ未登録の場合は何もしない
           setEditingShift(null);
         }
       }
@@ -314,8 +357,6 @@ export default function Home() {
     },
     [viewMode, departmentId, allPatterns, shiftRecords]
   );
-
-  // ★外部クリックイベントのグローバルuseEffectを削除：即座に閉じるバグ対策
 
   const loggedInName = staffProfile?.staff_name;
 
@@ -394,7 +435,6 @@ export default function Home() {
     return allPatterns.filter(pt => ids.includes(pt.id));
   }
 
-  // セル編集用セレクトを独立コンポーネント化
   type CellSelectProps = {
     value: string;
     options: ShiftPattern[];
@@ -405,17 +445,14 @@ export default function Home() {
 
   const CellSelect = React.memo((props: CellSelectProps) => {
     const { value, options, disabled, onChange, onBlur } = props;
-    // ローカルのrefを個別に持つ
     const selectRef = useRef<HTMLSelectElement | null>(null);
 
-    // 初回マウント時autoFocus
     useEffect(() => {
       if (selectRef.current) {
         selectRef.current.focus();
       }
     }, []);
 
-    // onBlurを e.relatedTarget で安全に処理（setTimeout廃止）
     const handleBlurSafe = useCallback((e: React.FocusEvent<HTMLSelectElement>) => {
       e.stopPropagation();
       if (
@@ -423,7 +460,6 @@ export default function Home() {
         (e.relatedTarget === selectRef.current ||
           (e.relatedTarget as HTMLElement).tagName === 'OPTION')
       ) {
-        // optionなどselect直下からのblurの場合は編集解除しない
         return;
       }
       onBlur(e);
@@ -438,13 +474,10 @@ export default function Home() {
         tabIndex={0}
         style={{ minWidth: 80 }}
         autoFocus
-        // onClickとonMouseDown, onMouseUpで伝播停止
         onClick={e => e.stopPropagation()}
         onMouseDown={e => e.stopPropagation()}
         onMouseUp={e => e.stopPropagation()}
-        // 即保存
         onChange={e => onChange(e.target.value)}
-        // onBlur時には e.relatedTarget を見てキャンセル
         onBlur={handleBlurSafe}
       >
         <option value="">-</option>
@@ -456,8 +489,6 @@ export default function Home() {
   });
   CellSelect.displayName = "CellSelect";
 
-  // 各セルのレンダリングをuseCallbackで安定化
-  // shiftMapは毎回最新の状態で再計算されるので、ここで表示ずれが起きることはない
   const renderCell = useCallback(
     (
       profile: StaffMasterProfile,
@@ -480,11 +511,6 @@ export default function Home() {
               value={shiftValue || ""}
               options={availablePatterns}
               disabled={isSaving}
-              // ↓onChange後に親から setEditingShift(null) を呼ぶ形に統一
-              // 301行目あたりでエラーとなる元: onBlur={() => setEditingShift(null)}
-              // 修正版:
-              // (onBlurプロパティはCellSelectの型で(onBlur: (e: React.FocusEvent<HTMLSelectElement>) => void)なので、
-              // 必ず引数を受け取るようにする)
               onChange={async (v) => {
                 await handleSave(profile.id, dayStr, v);
                 setEditingShift(null);
@@ -517,14 +543,46 @@ export default function Home() {
     [isSaving, handleSave, allPatterns, handleCellEdit]
   );
 
-  // 必要なprops配列外でループ展開
+  // ======== UI render ========
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
       {/* 1. ヘッダー */}
       <div className="flex-none p-4 md:p-6 pb-2">
         <header className="flex flex-col gap-3">
           <div className="flex justify-between items-center">
-            <h1 className="text-xl font-black text-blue-900 tracking-tight">勤務表 Pro v2</h1>
+            {/* 左側：タイトルとカレンダーコントロール */}
+            <div className="flex items-center gap-4">
+              <h1 className="text-xl font-black text-blue-900 tracking-tight">勤務表 Pro v2</h1>
+              {/* ▼ ここが年月コントロール部 */}
+              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 px-3 py-1 rounded-lg shadow-sm">
+                <button
+                  type="button"
+                  onClick={handlePrevMonth}
+                  className="p-1 px-2 text-[15px] font-bold text-blue-800 hover:bg-blue-100 rounded disabled:opacity-40"
+                  aria-label="前の月へ"
+                >◀</button>
+                <span className="ml-1 mr-2 text-[18px] font-bold select-none" data-testid="current-year">{year}</span>
+                <select
+                  className="px-2 py-1 border rounded text-[15px] font-bold bg-white mr-1"
+                  value={month}
+                  onChange={e => handleMonthSelect(Number(e.target.value))}
+                  aria-label="月選択"
+                  style={{ minWidth: "56px" }}
+                >
+                  {[...Array(12)].map((_, i) => {
+                    const m = i + 1;
+                    return <option key={m} value={m}>{MONTH_NAMES[m]}</option>;
+                  })}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleNextMonth}
+                  className="p-1 px-2 text-[15px] font-bold text-blue-800 hover:bg-blue-100 rounded disabled:opacity-40"
+                  aria-label="次の月へ"
+                >▶</button>
+              </div>
+            </div>
+            {/* 右側：ユーザー情報や「予定」「実績」切替など */}
             <div className="flex gap-2 items-center">
               {loggedInName && (
                 <div className="flex flex-col items-end mr-2">
