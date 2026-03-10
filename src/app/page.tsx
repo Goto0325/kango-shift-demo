@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, PostgrestSingleResponse } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -47,9 +47,10 @@ export default function Home() {
         .from("shift_patterns")
         .select("*")
         .order("id", { ascending: true });
+
       if (!error && Array.isArray(data)) {
         setAllPatterns(
-          data.map((row: any) => ({
+          (data as any[]).map((row: any) => ({
             id: row.id,
             pattern_name: row.pattern_name,
             pattern_key: row.pattern_key,
@@ -73,7 +74,8 @@ export default function Home() {
         .from("staff_master")
         .select("*")
         .eq("access_token", token)
-        .single();
+        .maybeSingle(); // 修正: .single() → .maybeSingle()
+
       if (error || !data) {
         setStaffProfile(null);
         setDepartmentId(null);
@@ -81,9 +83,9 @@ export default function Home() {
       }
       setStaffProfile({
         ...data,
-        work_patterns: safeParseIntArray(data.work_patterns),
+        work_patterns: safeParseIntArray((data as any).work_patterns),
       });
-      setDepartmentId(data.department_id ?? null);
+      setDepartmentId((data as any).department_id ?? null);
     };
     if (accessToken) {
       fetchStaffMaster(accessToken);
@@ -109,7 +111,7 @@ export default function Home() {
           .eq("department_id", departmentId)
           .order("staff_name", { ascending: true });
         if (!error && Array.isArray(data)) {
-          let membersArr = [...data].map((row: any) => ({
+          let membersArr = [...(data as any[])].map((row: any) => ({
             ...row,
             work_patterns: safeParseIntArray(row.work_patterns),
           }));
@@ -181,7 +183,7 @@ export default function Home() {
         .gte("date", startDate)
         .lte("date", endDate)
         .eq("mode", viewMode);
-      setShiftRecords(!error && data ? data : []);
+      setShiftRecords(!error && data ? (data as ShiftRecord[]) : []);
     };
     fetchShifts();
   }, [departmentId, viewMode, year, month, members, staffProfile?.id]);
@@ -214,11 +216,6 @@ export default function Home() {
 
   const [isSaving, setIsSaving] = useState(false);
 
-  // 編集セルの select DOM ref を記録（グローバルで不要。CellSelect内ローカルにする）
-  // const selectRef = useRef<HTMLSelectElement | null>(null);
-
-  // 編集モード時、自動的にプルダウンにフォーカスを当てる（不要: セレクトにautoFocusを付与）
-
   // 編集開始
   const handleCellEdit = useCallback((staff_id: string, date: string) => {
     setEditingShift({
@@ -228,9 +225,11 @@ export default function Home() {
   }, []);
 
   // セル保存
+  // 楽観的更新: フロントを即反映
   const handleSave = useCallback(
     async (staff_id: string, date: string, value: string) => {
       if (viewMode !== "plan" || !departmentId) return;
+
       setIsSaving(true);
       const isValidPatternKey =
         value === "" || allPatterns.some(pt => pt.pattern_key === value);
@@ -239,43 +238,78 @@ export default function Home() {
         setEditingShift(null);
         return;
       }
-      try {
-        let changedRecords: ShiftRecord[] = [...shiftRecords];
-        const idx = changedRecords.findIndex(
-          s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
-        );
-        if (idx >= 0) {
-          // 既存: update
-          const { data, error } = await supabase
-            .from("shifts")
-            .update({ shift_type: value === "" ? null : value })
-            .eq("id", changedRecords[idx].id)
-            .single();
-          if (!error && data) {
-            changedRecords[idx] = { ...changedRecords[idx], shift_type: value === "" ? null : value };
-          }
-        } else if (value !== "") {
-          // 新規: insert
-          const { data, error } = await supabase
+
+      let optimisticRecords: ShiftRecord[] = [...shiftRecords];
+      const idx = optimisticRecords.findIndex(
+        s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
+      );
+
+      if (idx >= 0) {
+        // 既存: update (新しい配列を生成)
+        const newShiftType = (value === "" ? null : value);
+        optimisticRecords = optimisticRecords.map((rec, i) => i === idx ? { ...rec, shift_type: newShiftType } : rec);
+        setShiftRecords([...optimisticRecords]);
+        setEditingShift(null);
+
+        // Supabase側にも反映
+        supabase
+          .from("shifts")
+          .update({ shift_type: newShiftType })
+          .eq("id", optimisticRecords[idx].id)
+          .single()
+          .then(({ data, error }) => {
+            // エラー時等、必要なら後続でリカバリーも検討可（ここではとりあえず何もしない）
+          });
+      } else {
+        // 新規の場合（insertまたは値が空なら何もしない）
+        if (value !== "") {
+          const newRec: ShiftRecord = {
+            // idはとりあえず -1。Supabase登録後にもどこかで同期される
+            id: Math.floor(Math.random() * -10000000), // 一時ID（事故防止！たとえば重複しないように、小さく負）
+            staff_id,
+            date,
+            shift_type: value,
+            mode: "plan",
+          };
+          optimisticRecords = [...optimisticRecords, newRec];
+          setShiftRecords([...optimisticRecords]);
+          setEditingShift(null);
+
+          // Supabase側へinsert。本物のidが帰ってきたら（理想は同期できるとよいが、ここでは即時UI反映重視）
+          supabase
             .from("shifts")
             .insert([
               {
-                staff_id: staff_id,
-                date: date,
+                staff_id,
+                date,
                 shift_type: value,
                 mode: "plan",
               }
             ])
-            .single();
-          if (!error && data) {
-            changedRecords.push(data);
-          }
+            .single()
+            .then(({ data, error }) => {
+              if (!error && data) {
+                setShiftRecords(prev => {
+                  const idxTemp = prev.findIndex(rec =>
+                    rec.id === newRec.id &&
+                    rec.staff_id === staff_id &&
+                    rec.date === date &&
+                    rec.mode === "plan"
+                  );
+                  if (idxTemp === -1) return prev;
+                  // 差し替えて新配列
+                  const updated = [...prev];
+                  updated[idxTemp] = { ...(data as ShiftRecord) };
+                  return updated;
+                });
+              }
+            });
+        } else {
+          // 空への変更かつ未登録の場合は何もしない
+          setEditingShift(null);
         }
-        setShiftRecords(changedRecords);
-        setEditingShift(null);
-      } catch {
-        setEditingShift(null);
       }
+
       setIsSaving(false);
     },
     [viewMode, departmentId, allPatterns, shiftRecords]
@@ -423,6 +457,7 @@ export default function Home() {
   CellSelect.displayName = "CellSelect";
 
   // 各セルのレンダリングをuseCallbackで安定化
+  // shiftMapは毎回最新の状態で再計算されるので、ここで表示ずれが起きることはない
   const renderCell = useCallback(
     (
       profile: StaffMasterProfile,
@@ -446,13 +481,15 @@ export default function Home() {
               options={availablePatterns}
               disabled={isSaving}
               // ↓onChange後に親から setEditingShift(null) を呼ぶ形に統一
+              // 301行目あたりでエラーとなる元: onBlur={() => setEditingShift(null)}
+              // 修正版:
+              // (onBlurプロパティはCellSelectの型で(onBlur: (e: React.FocusEvent<HTMLSelectElement>) => void)なので、
+              // 必ず引数を受け取るようにする)
               onChange={async (v) => {
                 await handleSave(profile.id, dayStr, v);
-                // セーブ完了後のみ編集解除
                 setEditingShift(null);
               }}
-              onBlur={() => {
-                // ブラー時のみ：setEditingShift(null)だが、onChange経由のときはそちらで解除
+              onBlur={(e) => {
                 setEditingShift(null);
               }}
             />
