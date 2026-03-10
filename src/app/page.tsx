@@ -17,7 +17,7 @@ type StaffMasterProfile = {
 };
 
 type ShiftRecordV2 = {
-  id?: number; // DBから取得時はnumber, 新規ローカルはundefinedも許す
+  id?: number;
   staff_name: string;
   date: string;
   is_actual: boolean;
@@ -54,10 +54,16 @@ function getJobTitleString(jobTitle: StaffMasterProfile["job_title"]) {
   return "";
 }
 
+function isRestishValue(value: string): boolean {
+  // 「休」または「有」を含むシフト値はtrueとみなす
+  if (!value) return false;
+  return value.includes("休") || value.includes("有");
+}
+
 // 希望休・休み系のパターン名またはキーを判定（拡張可能）
 function isRestPattern(pattern: ShiftPattern | undefined): boolean {
+  // ここは使わないが残しておく
   if (!pattern) return false;
-  // パターン名やパターンキーに"休", "有給"が含まれるものを認定、適宜増やす
   const restKeywords = ["休", "有給", "休日", "有休", "代休"];
   return restKeywords.some(
     k => (pattern.pattern_name && pattern.pattern_name.includes(k)) ||
@@ -65,12 +71,37 @@ function isRestPattern(pattern: ShiftPattern | undefined): boolean {
   );
 }
 
+// 管理者の「正確な判定＆ロギング」
+function isAdminUser(jobTitle: StaffMasterProfile["job_title"]) {
+  if (!jobTitle) {
+    console.log("[ADMIN判定] jobTitle undefined/null:", jobTitle);
+    return false;
+  }
+  let targetStr = "";
+  if (typeof jobTitle === "object" && jobTitle !== null) {
+    if ((jobTitle as any).name) targetStr = (jobTitle as any).name;
+    if (!targetStr && (jobTitle as any).label) targetStr = (jobTitle as any).label;
+  } else if (typeof jobTitle === "string") {
+    try {
+      const parsed = JSON.parse(jobTitle);
+      if (parsed && typeof parsed === "object") {
+        if (parsed.name) targetStr = parsed.name;
+        else if (parsed.label) targetStr = parsed.label;
+      }
+      if (!targetStr) targetStr = jobTitle;
+    } catch {
+      targetStr = jobTitle;
+    }
+  }
+  // ログ出力
+  console.log("[ADMIN判定] jobTitle解釈:", jobTitle, "→", targetStr);
+  return typeof targetStr === "string" && targetStr.includes("システム管理者");
+}
+
 export default function Home() {
-  // --- 「年」「月」のstate、初期値は2026年2月（既存のまま）
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
 
-  // 月切り替え補助
   const handlePrevMonth = useCallback(() => {
     setMonth(prevMonth => {
       if (prevMonth === 1) {
@@ -91,15 +122,11 @@ export default function Home() {
     });
   }, []);
 
-  // 月ドロップダウン選択用
   const handleMonthSelect = (newMonth: number) => {
     setMonth(newMonth);
   };
 
-  // 年ドロップダウンを追加する時は下記も拡張できる
-  // 保持する年の範囲を生成
   const getYearOptions = () => {
-    // 通常は±5年くらい
     const center = year;
     const ys: number[] = [];
     for (let d = -2; d <= 2; ++d) {
@@ -108,7 +135,6 @@ export default function Home() {
     return ys;
   };
 
-  // --- 既存
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [staffProfile, setStaffProfile] = useState<StaffMasterProfile | null>(null);
   const [departmentId, setDepartmentId] = useState<number | string | null>(null);
@@ -136,7 +162,6 @@ export default function Home() {
     fetchShiftPatterns();
   }, []);
 
-  // アクセストークンの保持: 月切り替えで消えないようstate依存なし、初回のみ取得
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const key = params.get('key');
@@ -258,7 +283,6 @@ export default function Home() {
         .gte("date", startDate)
         .lte("date", endDate)
         .eq("is_actual", viewMode === "actual");
-      // Ensure shape matches ShiftRecordV2
       if (!error && Array.isArray(data)) {
         setShiftRecords(
           data.map((rec: any) => ({
@@ -273,7 +297,6 @@ export default function Home() {
         setShiftRecords([]);
       }
     };
-    // 年または月が変わるたびに自動で動作
     fetchShifts();
   }, [departmentId, viewMode, year, month, members, staffProfile?.staff_name]);
 
@@ -291,7 +314,6 @@ export default function Home() {
     };
   };
 
-  // シフトMapを常に最新shiftRecordsから生成
   const shiftMap: { [staffName: string]: { [date: string]: string | null } } = useMemo(() => {
     const map: { [staffName: string]: { [date: string]: string | null } } = {};
     shiftRecords.forEach((rec) => {
@@ -309,7 +331,6 @@ export default function Home() {
   const [isSaving, setIsSaving] = useState(false);
 
   // ========== 権限ロジック: 編集可否判定 ==========
-  // 管理者役職: job_title・その中身に「システム管理者」等(サブ文字列一致)であればOK
   const canEdit = useCallback(
     (targetStaffId: string): boolean => {
       if (!staffProfile) return false;
@@ -322,12 +343,10 @@ export default function Home() {
     [staffProfile]
   );
 
-  // 管理者判定(true/false簡易変数)
+  // 管理者判定（職名形態も正確に見てDEBUGログ）
   const isAdmin = useMemo(() => {
-    if (!staffProfile) return false;
-    const jobTitleString = getJobTitleString(staffProfile.job_title);
-    return typeof jobTitleString === "string" && jobTitleString.includes("システム管理者");
-  }, [staffProfile]);
+    return isAdminUser(staffProfile?.job_title ?? "");
+  }, [staffProfile?.job_title]);
 
   // 編集開始
   const handleCellEdit = useCallback((staff_name: string, date: string) => {
@@ -337,8 +356,6 @@ export default function Home() {
     });
   }, []);
 
-  // セル保存
-  // Supabase upsert対応: [staff_name, date, is_actual]でユニーク性, 楽観的更新/エラー処理/カラム名マッチ
   const handleSave = useCallback(
     async (staff_id: string, date: string, value: string) => {
       if (!departmentId) return;
@@ -346,7 +363,6 @@ export default function Home() {
       if (!profile) return;
       const staff_name = profile.staff_name;
 
-      // 権限制御: 保存実行前にも念のため
       if (!canEdit(staff_id)) {
         setIsSaving(false);
         setEditingShift(null);
@@ -363,7 +379,6 @@ export default function Home() {
       const newShiftType = value === "" ? null : value;
       const is_actual = viewMode === "actual";
 
-      // 楽観的更新：shiftRecordsを先に更新
       setShiftRecords((prev) => {
         const keyMatch = (rec: ShiftRecordV2) =>
           rec.staff_name === staff_name && rec.date === date && rec.is_actual === is_actual;
@@ -379,11 +394,9 @@ export default function Home() {
             shift_type: newShiftType,
           });
         }
-        // React強制再描画: 新配列
         return [...replaced];
       });
 
-      // Supabase upsert: DBカラム完全一致、onConflictも一致
       const upsertRows = [
         {
           staff_name,
@@ -400,12 +413,10 @@ export default function Home() {
           .select();
 
         if (error) {
-          // ここで alert で原因見せる
           console.error("Shift upsert error:", error);
           alert('保存に失敗しました: ' + error.message);
         } else if (data && Array.isArray(data)) {
           setShiftRecords((prev) => {
-            // サーバーからの確定値で更新
             const keyMatch = (r: ShiftRecordV2, n: any) =>
               r.staff_name === n.staff_name && r.date === n.date && r.is_actual === !!n.is_actual;
             let replaced = [...prev];
@@ -437,13 +448,9 @@ export default function Home() {
 
   const loggedInName = staffProfile?.staff_name;
 
-  // ===== 修正ここから =====
-  // staffProfile?.job_title は undefined の可能性があるが getJobTitleString の引数は string | object | null 型で undefined 非許容
-  // undefinedを防ぐには staffProfile?.job_title ?? null を渡す
   const loggedInJob = useMemo(() => {
     return getJobTitleString(staffProfile?.job_title ?? null);
   }, [staffProfile?.job_title]);
-  // ===== 修正ここまで =====
 
   const loggedInPatterns = useMemo(() => {
     if (!staffProfile?.work_patterns || !Array.isArray(staffProfile.work_patterns)) return "";
@@ -549,7 +556,7 @@ export default function Home() {
   });
   CellSelect.displayName = "CellSelect";
 
-  // renderCell: 権限対応+UI制限+希望休カラー
+  // renderCell: 希望休ピンク色判定修正版
   const renderCell = useCallback(
     (
       profile: StaffMasterProfile,
@@ -562,21 +569,29 @@ export default function Home() {
       isEditing: boolean,
       cellKey: string
     ) => {
-      // 編集可否判定
       const allowEdit = editable && canEdit(profile.id);
 
-      // 管理者かどうか
-      // (外部変数isAdminを使う)
-
-      // 希望休「色」ロジック: 管理者・予定モード・休みパターン
+      // --- ここから希望休ピンク色対応 ---
       let highlightBg = "";
+
+      // 一時デバッグ
+      if (shiftValue) {
+        // staffProfile.job_title(全体でログ)はなく、profile.job_title(行毎)を
+        // ここでは色がつかない行全てconsole.log
+        console.log("[renderCell] job_title値:", staffProfile?.job_title, "| 行profile:", profile.job_title, "| shiftValue:", shiftValue);
+      }
+
+      let adminFlag = false;
+      // 管理者判定を profile か global どちらで見るかは元コード通りでOK
+      // 画面上は「self」ユーザーの判定で管理者かどうか判定したい！！
+      // つまり isAdmin で（staffProfileのjob_title）のみでOK
       if (isAdmin && viewMode === "plan" && shiftValue) {
-        const pat = allPatterns.find(p => p.pattern_key === shiftValue);
-        if (isRestPattern(pat)) {
-          // 強調色: 薄いピンク・オレンジ(例)
-          highlightBg = " bg-red-100";
+        // shiftValueが「休」または「有」を含む場合ハイライト
+        if (isRestishValue(shiftValue)) {
+          highlightBg = " !bg-pink-100"; // 明るいピンク系
         }
       }
+      // --- ここまで希望休ピンク色対応 ---
 
       if (isEditing) {
         return (
@@ -609,7 +624,6 @@ export default function Home() {
       }
       cellClassBase += ` ${info.bgColor}${highlightBg}`;
 
-      // shiftValue取得: staff_nameで紐付け
       return (
         <td
           key={cellKey}
@@ -629,7 +643,7 @@ export default function Home() {
         </td>
       );
     },
-    [isSaving, handleSave, allPatterns, handleCellEdit, canEdit, isAdmin, viewMode]
+    [isSaving, handleSave, allPatterns, handleCellEdit, canEdit, isAdmin, viewMode, staffProfile?.job_title]
   );
 
   // ======== UI render ========
