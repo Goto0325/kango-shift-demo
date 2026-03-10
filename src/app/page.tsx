@@ -6,13 +6,14 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// 型定義修正
 type StaffMasterProfile = {
   id: string;
   staff_name: string;
   access_token: string;
   job_title: string | object | null;
   department_id: number | string | null;
-  work_patterns: string | object | any[] | null;
+  work_patterns: number[] | null; // 修正: number[] | null
   paid_leave_remaining: number | null;
 };
 
@@ -20,14 +21,15 @@ type ShiftRecord = {
   id: number;
   staff_id: string;
   date: string;
-  shift_type: string | null;
+  shift_type: string | null; // pattern_key が入る
   mode: string;
 };
 
 type ShiftPattern = {
-  id: string;
-  key: string;
-  name: string;
+  id: number; // INTEGER
+  pattern_name: string;
+  pattern_key: string;
+  work_hours: number;
 };
 
 export default function Home() {
@@ -39,10 +41,10 @@ export default function Home() {
   const [staffProfile, setStaffProfile] = useState<StaffMasterProfile | null>(null);
   const [departmentId, setDepartmentId] = useState<number | string | null>(null);
 
-  // メンバ一覧（表示の基礎とする）
+  // メンバ一覧
   const [members, setMembers] = useState<StaffMasterProfile[]>([]);
 
-  // 勤務パターン・マスタ（※改修：allPatterns で全件を保持）
+  // パターン: allPatterns = shift_patternsから全件を保持
   const [allPatterns, setAllPatterns] = useState<ShiftPattern[]>([]);
 
   // shift_patterns マスタ 一度だけ取得
@@ -50,9 +52,17 @@ export default function Home() {
     const fetchShiftPatterns = async () => {
       const { data, error } = await supabase
         .from("shift_patterns")
-        .select("*"); // 全カラムを取得
+        .select("*")
+        .order("id", { ascending: true });
       if (!error && Array.isArray(data)) {
-        setAllPatterns(data as ShiftPattern[]);
+        setAllPatterns(
+          data.map((row: any) => ({
+            id: row.id,
+            pattern_name: row.pattern_name,
+            pattern_key: row.pattern_key,
+            work_hours: row.work_hours,
+          }))
+        );
       }
     };
     fetchShiftPatterns();
@@ -77,7 +87,10 @@ export default function Home() {
         setDepartmentId(null);
         return;
       }
-      setStaffProfile(data as StaffMasterProfile);
+      setStaffProfile({
+        ...data,
+        work_patterns: safeParseIntArray(data.work_patterns),
+      });
       setDepartmentId(data.department_id ?? null);
     };
     if (accessToken) {
@@ -86,6 +99,7 @@ export default function Home() {
       setStaffProfile(null);
       setDepartmentId(null);
     }
+    // eslint-disable-next-line
   }, [accessToken]);
 
   // 部署内全職員データ取得＋自分の行1行目ルール
@@ -106,7 +120,11 @@ export default function Home() {
           .order("staff_name", { ascending: true });
 
         if (!error && Array.isArray(data)) {
-          let membersArr = [...data];
+          let membersArr = [...data].map((row: any) => ({
+            ...row,
+            work_patterns: safeParseIntArray(row.work_patterns),
+          }));
+
           if (staffProfile) {
             const idx = membersArr.findIndex((s: any) => s.id === staffProfile.id);
             if (idx >= 0) {
@@ -140,6 +158,7 @@ export default function Home() {
     };
 
     fetchMembers();
+    // eslint-disable-next-line
   }, [departmentId, staffProfile]);
 
   // シフト実績取得
@@ -182,6 +201,7 @@ export default function Home() {
       setShiftRecords(!error && data ? data : []);
     };
     fetchShifts();
+    // eslint-disable-next-line
   }, [departmentId, viewMode, year, month, members, staffProfile?.id]);
 
   // 日付配列
@@ -206,27 +226,23 @@ export default function Home() {
     shiftMap[rec.staff_id][rec.date] = rec.shift_type;
   });
 
-  // シフトタイプ選択state
+  // 編集シフト選択状態
   const [editingShift, setEditingShift] = useState<{
     staff_id: string;
     date: string;
-    shift_type: string | null;
   } | null>(null);
 
-  // 編集セル用保存中フラグ
   const [isSaving, setIsSaving] = useState(false);
 
-  // 編集開始
-  const handleCellEdit = (staff_id: string, date: string, current: string | null) => {
+  // 「編集」開始（セルをクリックで編集状態に）
+  const handleCellEdit = (staff_id: string, date: string) => {
     setEditingShift({
       staff_id,
       date,
-      shift_type: current,
     });
   };
 
-  // セル保存 onChange発火専用：即保存 & 描画即反映
-  // --- 指示対応：onChangeでhandleSaveが必ず走るようここは維持 ---
+  // セル保存: 選択した瞬間に保存（onChangeのみ、保存・キャンセルボタンなし）
   const handleSave = async (staff_id: string, date: string, value: string) => {
     if (
       viewMode !== "plan" ||
@@ -234,9 +250,7 @@ export default function Home() {
     ) return;
     setIsSaving(true);
     try {
-      // UI先に更新
       setEditingShift(null);
-
       let changedRecords = [...shiftRecords];
       const idx = changedRecords.findIndex(
         s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
@@ -312,122 +326,61 @@ export default function Home() {
     return String(staffProfile.job_title);
   }, [staffProfile?.job_title]);
 
-  // パターン解釈: 配列から name だけjoinして画面右上 [object Object] を防ぐ
+  // パターン名の文字列化（右上表示用）
   const loggedInPatterns = useMemo(() => {
-    if (!staffProfile?.work_patterns) return "";
-    if (typeof staffProfile.work_patterns === "string") {
-      try {
-        const parsed = JSON.parse(staffProfile.work_patterns);
-        if (Array.isArray(parsed)) {
-          return parsed.map((x: any) => x?.name || x?.label || x?.key).filter(Boolean).join(",");
-        }
-        if (parsed && typeof parsed === "object" && (parsed.name || parsed.label || parsed.key)) {
-          return parsed.name || parsed.label || parsed.key;
-        }
-      } catch {
-        return staffProfile.work_patterns;
-      }
-      return "";
-    }
-    if (Array.isArray(staffProfile.work_patterns)) {
-      return staffProfile.work_patterns
-        .map((x: any) => x?.name || x?.label || x?.key).filter(Boolean).join(",");
-    }
-    if (
-      typeof staffProfile.work_patterns === "object" &&
-      staffProfile.work_patterns !== null &&
-      ((staffProfile.work_patterns as any).name || (staffProfile.work_patterns as any).label || (staffProfile.work_patterns as any).key)
-    ) {
-      return (
-        (staffProfile.work_patterns as any).name ||
-        (staffProfile.work_patterns as any).label ||
-        (staffProfile.work_patterns as any).key
-      );
-    }
-    return "";
-  }, [staffProfile?.work_patterns]);
+    if (!staffProfile?.work_patterns || !Array.isArray(staffProfile.work_patterns)) return "";
+    const patterns = allPatterns.filter(pt =>
+      staffProfile.work_patterns!.includes(pt.id)
+    );
+    return patterns.map(pt => pt.pattern_name).join(",");
+  }, [staffProfile?.work_patterns, allPatterns]);
 
   const paidLeave = staffProfile?.paid_leave_remaining;
 
-  // デバッグ
-  useEffect(() => {
-    if (members.length === 0) {
-      // console.error("エラー: 表示する職員データが0件です。");
-    } else {
-      // console.log("表示する職員:", members);
-    }
-  }, [members]);
-
-  // 指示：ユーザごとに使えるパターン（allPatternsからstaff.work_patternsのuuid/id一致でfilter）
-  // セーフパース関数
-  function parsePatternUuids(wp: any): string[] {
-    // null や undefined
-    if (!wp) return [];
-    // JSONArray
+  // work_patternsが配列で返らない場合用 セーフパース
+  function safeParseIntArray(wp: any): number[] | null {
+    if (!wp) return null;
     if (Array.isArray(wp)) {
-      return wp
-        .map((x: any) => x?.id || x?.key || x)
-        .filter(Boolean)
-        .map(String);
+      return wp.map(Number).filter(v => !isNaN(v));
     }
-    // 文字列→JSON parse or {uuid,uuid}風など
     if (typeof wp === "string") {
-      try {
-        // 配列JSONパース可能な場合
-        const parsed = JSON.parse(wp);
-        if (Array.isArray(parsed)) {
-          return parsed
-            .map((x: any) => x?.id || x?.key || x)
-            .filter(Boolean)
-            .map(String);
-        }
-        // オブジェクト(JSON)
-        if (parsed && typeof parsed === "object") {
-          if (parsed.id) return [String(parsed.id)];
-          if (parsed.key) return [String(parsed.key)];
-        }
-      } catch {
-        // {uuid,uuid}フォーマット ([{A,B}]や'["id","id"]'でない)→手動split
-        if (wp.startsWith('{') && wp.endsWith('}')) {
-          return wp
-            .substring(1, wp.length - 1)
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean)
-            .map(String);
-        }
-        // カンマ区切り
-        if (wp.includes(',')) {
-          return wp.split(',').map(s => s.trim()).filter(Boolean).map(String);
-        }
-        // 素パターンID1個
-        if (wp.length > 0) {
-          return [wp];
-        }
+      // パターン: '{1,2,3}'、'[1,2,3]'、"1,2,3"
+      if (wp.startsWith('{') && wp.endsWith('}')) {
+        // '{1,2,3}'
+        return wp
+          .slice(1, -1)
+          .split(',')
+          .map(s => Number(s.trim()))
+          .filter(v => !isNaN(v));
+      }
+      if (wp.startsWith('[') && wp.endsWith(']')) {
+        try {
+          const arr = JSON.parse(wp);
+          if (Array.isArray(arr)) {
+            return arr.map(Number).filter(v => !isNaN(v));
+          }
+        } catch {}
+      }
+      // カンマ区切り: "1,2,3"
+      if (wp.includes(',')) {
+        return wp
+          .split(',')
+          .map(s => Number(s.trim()))
+          .filter(v => !isNaN(v));
+      }
+      // 数値1つだけ
+      if (!isNaN(Number(wp))) {
+        return [Number(wp)];
       }
     }
-    // オブジェクト（1つだけパターンを持つ場合）
-    if (typeof wp === "object" && wp !== null) {
-      if ((wp as any).id) return [String((wp as any).id)];
-      if ((wp as any).key) return [String((wp as any).key)];
-    }
-    return [];
+    return null;
   }
 
+  // パターン絞り込み: 各ユーザごとに使える勤務パターンを返す
   function getAvailablePatterns(profile: StaffMasterProfile): ShiftPattern[] {
-    // 指示：もし空配列ならallPatterns全体を出す（プルダウン空空問題回避）
-    const ids = parsePatternUuids(profile?.work_patterns);
-    if (
-      !ids ||
-      (Array.isArray(ids) && ids.length === 0)
-    ) {
-      // デバッグ時は全パターン出す
-      return allPatterns;
-    }
-    // id/uuidと一致する全パターンを抽出
-    return allPatterns.filter(
-      (pt) => ids.includes(pt.id) || ids.includes(pt.key)
-    );
+    const ids = profile?.work_patterns;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) return [];
+    return allPatterns.filter(pt => ids.includes(pt.id));
   }
 
   return (
@@ -514,8 +467,20 @@ export default function Home() {
                   }
                 }
 
-                // 勤務パターン - allPatterns x work_patterns(uuid or key or id)
+                // 勤務パターン - 指定ID一覧のみ
                 const availablePatterns = getAvailablePatterns(profile);
+
+                // 合計勤務時間
+                let totalHours = 0;
+
+                // 右端合計用: 各日ごとの pattern_key で合算
+                days.forEach(d => {
+                  const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+                  const shiftKey = shiftMap?.[profile.id]?.[dayStr];
+                  if (!shiftKey) return;
+                  const pat = allPatterns.find(p => p.pattern_key === shiftKey);
+                  if (pat) totalHours += pat.work_hours;
+                });
 
                 return (
                   <tr key={profile.id || profile.staff_name} className="h-11">
@@ -525,7 +490,7 @@ export default function Home() {
                         <span className="text-[10px] text-gray-500 font-normal ml-1">
                           {jobTitle}
                           {availablePatterns.length > 0
-                            ? ` (${availablePatterns.map(x => x.name).join(",")})`
+                            ? ` (${availablePatterns.map(x => x.pattern_name).join(",")})`
                             : ""}
                         </span>
                       </div>
@@ -537,6 +502,7 @@ export default function Home() {
                       const editable = viewMode === "plan" && !!loggedInName;
                       const isEditing = editingShift && editingShift.staff_id === profile.id && editingShift.date === dayStr;
 
+                      // セル編集/表示切り替え
                       if (isEditing) {
                         return (
                           <td
@@ -548,7 +514,7 @@ export default function Home() {
                               value={shiftValue || ""}
                               autoFocus
                               disabled={isSaving}
-                              // onChange: onChangeで即時 handleSave
+                              // 変更＝即保存
                               onChange={async (e) => {
                                 const v = e.target.value;
                                 await handleSave(profile.id, dayStr, v);
@@ -558,9 +524,7 @@ export default function Home() {
                             >
                               <option value="">-</option>
                               {availablePatterns.map(pt => (
-                                <option key={pt.key ?? pt.id} value={pt.key ?? pt.id}>
-                                  {pt.name}
-                                </option>
+                                <option key={pt.id} value={pt.pattern_key}>{pt.pattern_name}</option>
                               ))}
                             </select>
                           </td>
@@ -574,31 +538,20 @@ export default function Home() {
                           tabIndex={0}
                           onClick={e => {
                             e.stopPropagation();
-                            if (editable) handleCellEdit(profile.id, dayStr, shiftValue);
+                            if (editable) handleCellEdit(profile.id, dayStr);
                           }}
                         >
-                          {/* 表示最適化：登録があれば名称、なければ "-" */}
                           {
                             shiftValue
-                              ? (availablePatterns.find(p => p.key === shiftValue || p.id === shiftValue)?.name || shiftValue)
+                              ? (allPatterns.find(p => p.pattern_key === shiftValue)?.pattern_name || shiftValue)
                               : "-"
                           }
                         </td>
                       );
                     })}
-                    {/* 合計欄：既存勤務パターン毎の合計 */}
+                    {/* 合計欄：合計勤務時間 */}
                     <td className="border-b border-slate-200 text-center font-bold bg-slate-50 text-[10px]">
-                      {availablePatterns.map(t => {
-                        const count = days.filter(d => {
-                          const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                          return shiftMap?.[profile.id]?.[dayStr] === t.key || shiftMap?.[profile.id]?.[dayStr] === t.id;
-                        }).length;
-                        return (
-                          <span key={t.key ?? t.id} className="ml-1">
-                            {(t.key ?? t.id) || '-'}:{count}&nbsp;
-                          </span>
-                        );
-                      })}
+                      {totalHours}
                     </td>
                   </tr>
                 );
@@ -612,15 +565,18 @@ export default function Home() {
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
-                      {/* 合計は代表パターン種別名でサマリーされるべきだが、ここは例のまま */}
-                      {["日", "早", "遅", "夜"].map(type => {
+                      {/* パターンキー x 人の合計数を表示。必要なら勤務時間合計なども可 */}
+                      {allPatterns.map(pt => {
                         const count = members.filter(n => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                          return shiftMap?.[n.id]?.[dayStr] === type;
+                          return shiftMap?.[n.id]?.[dayStr] === pt.pattern_key;
                         }).length;
                         return count > 0 ? (
-                          <span key={type} className={`text-[11px] leading-tight ${type === "早" ? "text-orange-400" : type === "遅" ? "text-purple-400" : type === "夜" ? "text-blue-400" : "text-white"}`}>
-                            {type}:{count}
+                          <span
+                            key={pt.pattern_key}
+                            className="text-[11px] leading-tight text-white"
+                          >
+                            {pt.pattern_key}:{count}
                           </span>
                         ) : null;
                       })}
