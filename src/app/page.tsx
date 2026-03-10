@@ -533,7 +533,7 @@ export default function Home() {
     const patterns = allPatterns.filter(pt =>
       staffProfile.work_patterns!.includes(pt.id)
     );
-    return patterns.map(pt => pt.pattern_name).join(",");
+    return patterns.map(pt => pt.pattern_key).join(",");  // ← pattern_keyへ
   }, [staffProfile?.work_patterns, allPatterns]);
 
   const paidLeave = staffProfile?.paid_leave_remaining;
@@ -627,7 +627,7 @@ export default function Home() {
       >
         <option value="">-</option>
         {options.map(pt => (
-          <option key={pt.id} value={pt.pattern_key}>{pt.pattern_name}</option>
+          <option key={pt.id} value={pt.pattern_key}>{pt.pattern_key}</option>
         ))}
       </select>
     );
@@ -717,7 +717,7 @@ export default function Home() {
         >
           {
             shiftValue
-              ? (allPatterns.find(p => p.pattern_key === shiftValue)?.pattern_name || shiftValue)
+              ? (allPatterns.find(p => p.pattern_key === shiftValue)?.pattern_key || shiftValue)
               : "-"
           }
         </td>
@@ -911,7 +911,7 @@ export default function Home() {
                         <span className={jobTitleClass}>
                           {jobTitle}
                           {availablePatterns.length > 0
-                            ? ` (${availablePatterns.map(x => x.pattern_name).join(",")})`
+                            ? ` (${availablePatterns.map(x => x.pattern_key).join(",")})`
                             : ""}
                         </span>
                       </div>
