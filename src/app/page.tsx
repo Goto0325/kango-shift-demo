@@ -22,6 +22,7 @@ type ShiftRecordV2 = {
   date: string;
   is_actual: boolean;
   shift_type: string | null;
+  updated_by?: string | null; // 追加: 保存者記録
 };
 
 type ShiftPattern = {
@@ -249,6 +250,7 @@ export default function Home() {
     fetchMembers();
   }, [departmentId, staffProfile]);
 
+  // ====== ここから: ShiftRecordV2/shiftRecords/shiftMap に updated_by を含めて扱う ======
   const [shiftRecords, setShiftRecords] = useState<ShiftRecordV2[]>([]);
   const [viewMode, setViewMode] = useState<'plan' | 'actual'>("plan");
   useEffect(() => {
@@ -291,6 +293,7 @@ export default function Home() {
             date: rec.date,
             is_actual: !!rec.is_actual,
             shift_type: rec.shift_type,
+            updated_by: rec.updated_by ?? null, // 追加（もし null なら null）
           }))
         );
       } else {
@@ -299,6 +302,7 @@ export default function Home() {
     };
     fetchShifts();
   }, [departmentId, viewMode, year, month, members, staffProfile?.staff_name]);
+  // ====== ここまで ======
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -314,14 +318,16 @@ export default function Home() {
     };
   };
 
-  const shiftMap: { [staffName: string]: { [date: string]: string | null } } = useMemo(() => {
-    const map: { [staffName: string]: { [date: string]: string | null } } = {};
+  // ====== shiftMapを updated_by も含めて返す ======
+  const shiftMap: { [staffName: string]: { [date: string]: { value: string | null, updated_by: string | null | undefined } } } = useMemo(() => {
+    const map: { [staffName: string]: { [date: string]: { value: string | null, updated_by: string | null | undefined } } } = {};
     shiftRecords.forEach((rec) => {
       if (!map[rec.staff_name]) map[rec.staff_name] = {};
-      map[rec.staff_name][rec.date] = rec.shift_type;
+      map[rec.staff_name][rec.date] = { value: rec.shift_type, updated_by: rec.updated_by ?? null };
     });
     return map;
   }, [shiftRecords]);
+  // =====================
 
   const [editingShift, setEditingShift] = useState<{
     staff_name: string;
@@ -356,19 +362,19 @@ export default function Home() {
     });
   }, []);
 
+  // ===== handleSave: updated_byに自分の名前を保存 ============
   const handleSave = useCallback(
     async (staff_id: string, date: string, value: string) => {
       if (!departmentId) return;
       const profile = members.find(m => m.id === staff_id);
       if (!profile) return;
       const staff_name = profile.staff_name;
-
+      const loggedInName = staffProfile?.staff_name ?? null;
       if (!canEdit(staff_id)) {
         setIsSaving(false);
         setEditingShift(null);
         return;
       }
-
       setIsSaving(true);
       const isValidPatternKey = value === "" || allPatterns.some(pt => pt.pattern_key === value);
       if (!isValidPatternKey) {
@@ -385,13 +391,14 @@ export default function Home() {
         let replaced = [...prev];
         const ix = replaced.findIndex(keyMatch);
         if (ix >= 0) {
-          replaced[ix] = { ...replaced[ix], shift_type: newShiftType };
+          replaced[ix] = { ...replaced[ix], shift_type: newShiftType, updated_by: loggedInName }; // ここ
         } else {
           replaced.push({
             staff_name,
             date,
             is_actual,
             shift_type: newShiftType,
+            updated_by: loggedInName,
           });
         }
         return [...replaced];
@@ -403,6 +410,7 @@ export default function Home() {
           date,
           is_actual,
           shift_type: newShiftType,
+          updated_by: loggedInName, // ここ
         }
       ];
 
@@ -428,6 +436,7 @@ export default function Home() {
                 date: newRec.date,
                 is_actual: !!newRec.is_actual,
                 shift_type: newRec.shift_type,
+                updated_by: newRec.updated_by ?? null,
               };
               if (ix >= 0) {
                 replaced[ix] = cleaned;
@@ -443,8 +452,9 @@ export default function Home() {
       }
       setEditingShift(null);
     },
-    [viewMode, departmentId, allPatterns, canEdit, members]
+    [viewMode, departmentId, allPatterns, canEdit, members, staffProfile?.staff_name]
   );
+  // =============== ここまで handleSave ================
 
   const loggedInName = staffProfile?.staff_name;
 
@@ -556,7 +566,7 @@ export default function Home() {
   });
   CellSelect.displayName = "CellSelect";
 
-  // renderCell: 希望休ピンク色判定修正版
+  // ======== renderCell: 背景色条件分岐 ========
   const renderCell = useCallback(
     (
       profile: StaffMasterProfile,
@@ -571,27 +581,42 @@ export default function Home() {
     ) => {
       const allowEdit = editable && canEdit(profile.id);
 
-      // --- ここから希望休ピンク色対応 ---
+      // 管理者セル色分岐 custom
       let highlightBg = "";
+
+      const thisMap = shiftMap?.[profile.staff_name]?.[dayStr];
 
       // 一時デバッグ
       if (shiftValue) {
-        // staffProfile.job_title(全体でログ)はなく、profile.job_title(行毎)を
-        // ここでは色がつかない行全てconsole.log
-        console.log("[renderCell] job_title値:", staffProfile?.job_title, "| 行profile:", profile.job_title, "| shiftValue:", shiftValue);
+        console.log("[renderCell] job_title値:", staffProfile?.job_title, "| 行profile:", profile.job_title, "| shiftValue:", shiftValue, "| updated_by:", thisMap?.updated_by);
       }
 
-      let adminFlag = false;
-      // 管理者判定を profile か global どちらで見るかは元コード通りでOK
-      // 画面上は「self」ユーザーの判定で管理者かどうか判定したい！！
-      // つまり isAdmin で（staffProfileのjob_title）のみでOK
+      // 指定条件
+      // (A) 管理者 (isAdmin)
+      // (B) 予定モード
+      // (C) shiftValueがある
       if (isAdmin && viewMode === "plan" && shiftValue) {
-        // shiftValueが「休」または「有」を含む場合ハイライト
-        if (isRestishValue(shiftValue)) {
-          highlightBg = " !bg-pink-100"; // 明るいピンク系
+        // updated_by 取得（nullも考慮）
+        // 自分（ログイン中管理者）のstaff_name
+        const selfName = staffProfile?.staff_name;
+        if (thisMap) {
+          // データがあり
+          const { updated_by } = thisMap;
+          if (updated_by === selfName) {
+            // 自分の入力 = デフォルト(白)色
+            highlightBg = "";
+          } else if (!updated_by) {
+            // null → 希望（ピンク）
+            highlightBg = " !bg-pink-100";
+          } else {
+            // 他人 → 希望（ピンク）
+            highlightBg = " !bg-pink-100";
+          }
+        } else {
+          // レコードそのものがない場合は色なし
+          highlightBg = "";
         }
       }
-      // --- ここまで希望休ピンク色対応 ---
 
       if (isEditing) {
         return (
@@ -643,7 +668,7 @@ export default function Home() {
         </td>
       );
     },
-    [isSaving, handleSave, allPatterns, handleCellEdit, canEdit, isAdmin, viewMode, staffProfile?.job_title]
+    [isSaving, handleSave, allPatterns, handleCellEdit, canEdit, isAdmin, viewMode, staffProfile?.job_title, staffProfile?.staff_name, shiftMap]
   );
 
   // ======== UI render ========
@@ -766,7 +791,8 @@ export default function Home() {
                 let totalHours = 0;
                 days.forEach(d => {
                   const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                  const shiftKey = shiftMap?.[profile.staff_name]?.[dayStr];
+                  // shiftMap内, .value
+                  const shiftKey = shiftMap?.[profile.staff_name]?.[dayStr]?.value;
                   if (!shiftKey) return;
                   const pat = allPatterns.find(p => p.pattern_key === shiftKey);
                   if (pat) totalHours += pat.work_hours;
@@ -798,7 +824,8 @@ export default function Home() {
                     {days.map(d => {
                       const info = getDayInfo(d);
                       const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                      let shiftValue = shiftMap?.[profile.staff_name]?.[dayStr] ?? "";
+                      let mapEntry = shiftMap?.[profile.staff_name]?.[dayStr];
+                      let shiftValue = mapEntry?.value ?? "";
                       const editable = (viewMode === "plan") && !!loggedInName && canEdit(profile.id);
                       const isEditing = editingShift && editingShift.staff_name === profile.staff_name && editingShift.date === dayStr;
                       const cellKey = `${profile.staff_name}_${dayStr}`;
@@ -832,7 +859,7 @@ export default function Home() {
                       {allPatterns.map(pt => {
                         const count = members.filter(n => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                          return shiftMap?.[n.staff_name]?.[dayStr] === pt.pattern_key;
+                          return shiftMap?.[n.staff_name]?.[dayStr]?.value === pt.pattern_key;
                         }).length;
                         return count > 0 ? (
                           <span
