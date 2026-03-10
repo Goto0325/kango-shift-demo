@@ -22,7 +22,7 @@ type ShiftRecordV2 = {
   date: string;
   is_actual: boolean;
   shift_type: string | null;
-  updated_by?: string | null; // 追加: 保存者記録
+  updated_by?: string | null;
 };
 
 type ShiftPattern = {
@@ -36,7 +36,7 @@ const MONTH_NAMES = [
   "", "1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"
 ];
 
-// ==== 編集権限ロジック ====
+// ==== 職種取得・職種分類 ====
 function getJobTitleString(jobTitle: StaffMasterProfile["job_title"]) {
   if (!jobTitle) return "";
   if (typeof jobTitle === "string") {
@@ -56,14 +56,11 @@ function getJobTitleString(jobTitle: StaffMasterProfile["job_title"]) {
 }
 
 function isRestishValue(value: string): boolean {
-  // 「休」または「有」を含むシフト値はtrueとみなす
   if (!value) return false;
   return value.includes("休") || value.includes("有");
 }
 
-// 希望休・休み系のパターン名またはキーを判定（拡張可能）
 function isRestPattern(pattern: ShiftPattern | undefined): boolean {
-  // ここは使わないが残しておく
   if (!pattern) return false;
   const restKeywords = ["休", "有給", "休日", "有休", "代休"];
   return restKeywords.some(
@@ -72,7 +69,6 @@ function isRestPattern(pattern: ShiftPattern | undefined): boolean {
   );
 }
 
-// 管理者の「正確な判定＆ロギング」
 function isAdminUser(jobTitle: StaffMasterProfile["job_title"]) {
   if (!jobTitle) {
     console.log("[ADMIN判定] jobTitle undefined/null:", jobTitle);
@@ -94,9 +90,23 @@ function isAdminUser(jobTitle: StaffMasterProfile["job_title"]) {
       targetStr = jobTitle;
     }
   }
-  // ログ出力
   console.log("[ADMIN判定] jobTitle解釈:", jobTitle, "→", targetStr);
   return typeof targetStr === "string" && targetStr.includes("システム管理者");
+}
+
+// 職種（job_title）を分類
+function jobTitleCategory(jobTitle: StaffMasterProfile["job_title"]): number {
+  // 0: システム管理者, 1: 看護師, 2: 介護士など, 9: その他
+  const title = getJobTitleString(jobTitle);
+  if (title.includes("システム管理者")) return 0;
+  if (title.includes("看護師")) return 1;
+  if (title.includes("介護") || title.includes("助手")) return 2;
+  return 9;
+}
+function jobTitleKey(jobTitle: StaffMasterProfile["job_title"]): string {
+  // 並べ替え時に同値ソートで使う(なるべく五十音順)
+  const t = getJobTitleString(jobTitle);
+  return t || "";
 }
 
 export default function Home() {
@@ -250,7 +260,6 @@ export default function Home() {
     fetchMembers();
   }, [departmentId, staffProfile]);
 
-  // ====== ここから: ShiftRecordV2/shiftRecords/shiftMap に updated_by を含めて扱う ======
   const [shiftRecords, setShiftRecords] = useState<ShiftRecordV2[]>([]);
   const [viewMode, setViewMode] = useState<'plan' | 'actual'>("plan");
   useEffect(() => {
@@ -293,7 +302,7 @@ export default function Home() {
             date: rec.date,
             is_actual: !!rec.is_actual,
             shift_type: rec.shift_type,
-            updated_by: rec.updated_by ?? null, // 追加（もし null なら null）
+            updated_by: rec.updated_by ?? null,
           }))
         );
       } else {
@@ -302,7 +311,6 @@ export default function Home() {
     };
     fetchShifts();
   }, [departmentId, viewMode, year, month, members, staffProfile?.staff_name]);
-  // ====== ここまで ======
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -318,7 +326,6 @@ export default function Home() {
     };
   };
 
-  // ====== shiftMapを updated_by も含めて返す ======
   const shiftMap: { [staffName: string]: { [date: string]: { value: string | null, updated_by: string | null | undefined } } } = useMemo(() => {
     const map: { [staffName: string]: { [date: string]: { value: string | null, updated_by: string | null | undefined } } } = {};
     shiftRecords.forEach((rec) => {
@@ -327,7 +334,6 @@ export default function Home() {
     });
     return map;
   }, [shiftRecords]);
-  // =====================
 
   const [editingShift, setEditingShift] = useState<{
     staff_name: string;
@@ -336,7 +342,6 @@ export default function Home() {
 
   const [isSaving, setIsSaving] = useState(false);
 
-  // ========== 権限ロジック: 編集可否判定 ==========
   const canEdit = useCallback(
     (targetStaffId: string): boolean => {
       if (!staffProfile) return false;
@@ -349,12 +354,10 @@ export default function Home() {
     [staffProfile]
   );
 
-  // 管理者判定（職名形態も正確に見てDEBUGログ）
   const isAdmin = useMemo(() => {
     return isAdminUser(staffProfile?.job_title ?? "");
   }, [staffProfile?.job_title]);
 
-  // 編集開始
   const handleCellEdit = useCallback((staff_name: string, date: string) => {
     setEditingShift({
       staff_name,
@@ -362,7 +365,6 @@ export default function Home() {
     });
   }, []);
 
-  // ===== handleSave: updated_byに自分の名前を保存 ============
   const handleSave = useCallback(
     async (staff_id: string, date: string, value: string) => {
       if (!departmentId) return;
@@ -391,7 +393,7 @@ export default function Home() {
         let replaced = [...prev];
         const ix = replaced.findIndex(keyMatch);
         if (ix >= 0) {
-          replaced[ix] = { ...replaced[ix], shift_type: newShiftType, updated_by: loggedInName }; // ここ
+          replaced[ix] = { ...replaced[ix], shift_type: newShiftType, updated_by: loggedInName };
         } else {
           replaced.push({
             staff_name,
@@ -410,7 +412,7 @@ export default function Home() {
           date,
           is_actual,
           shift_type: newShiftType,
-          updated_by: loggedInName, // ここ
+          updated_by: loggedInName,
         }
       ];
 
@@ -454,7 +456,6 @@ export default function Home() {
     },
     [viewMode, departmentId, allPatterns, canEdit, members, staffProfile?.staff_name]
   );
-  // =============== ここまで handleSave ================
 
   const loggedInName = staffProfile?.staff_name;
 
@@ -581,39 +582,26 @@ export default function Home() {
     ) => {
       const allowEdit = editable && canEdit(profile.id);
 
-      // 管理者セル色分岐 custom
       let highlightBg = "";
 
       const thisMap = shiftMap?.[profile.staff_name]?.[dayStr];
 
-      // 一時デバッグ
       if (shiftValue) {
         console.log("[renderCell] job_title値:", staffProfile?.job_title, "| 行profile:", profile.job_title, "| shiftValue:", shiftValue, "| updated_by:", thisMap?.updated_by);
       }
 
-      // 指定条件
-      // (A) 管理者 (isAdmin)
-      // (B) 予定モード
-      // (C) shiftValueがある
       if (isAdmin && viewMode === "plan" && shiftValue) {
-        // updated_by 取得（nullも考慮）
-        // 自分（ログイン中管理者）のstaff_name
         const selfName = staffProfile?.staff_name;
         if (thisMap) {
-          // データがあり
           const { updated_by } = thisMap;
           if (updated_by === selfName) {
-            // 自分の入力 = デフォルト(白)色
             highlightBg = "";
           } else if (!updated_by) {
-            // null → 希望（ピンク）
             highlightBg = " !bg-pink-100";
           } else {
-            // 他人 → 希望（ピンク）
             highlightBg = " !bg-pink-100";
           }
         } else {
-          // レコードそのものがない場合は色なし
           highlightBg = "";
         }
       }
@@ -670,6 +658,38 @@ export default function Home() {
     },
     [isSaving, handleSave, allPatterns, handleCellEdit, canEdit, isAdmin, viewMode, staffProfile?.job_title, staffProfile?.staff_name, shiftMap]
   );
+
+  // ======== 並び替え付き・職種間区切り付き members を計算 ========
+  const sortedMembers = useMemo(() => {
+    if (!members || members.length === 0) return [];
+    let arr = [...members];
+
+    // 1. 管理者かどうか
+    const admin = isAdmin && staffProfile;
+    // 2. 並び替え
+    arr = arr.sort((a, b) => {
+      // 0:システム管理者 1:看護師 2:介護士/助手 9:その他
+      const catA = jobTitleCategory(a.job_title);
+      const catB = jobTitleCategory(b.job_title);
+      if (catA !== catB) return catA - catB;
+      // 同じ職種カテゴリ内で staff_name 五十音順
+      const keyA = (a.staff_name || "").localeCompare(b.staff_name || "", "ja");
+      if (keyA !== 0) return keyA;
+      // 更に表示名で微ソート（不要だが保険）
+      return (jobTitleKey(a.job_title) || "").localeCompare(jobTitleKey(b.job_title) || "", "ja");
+    });
+
+    // 管理者の場合は自分の行を先頭にする
+    if (admin) {
+      const myIdx = arr.findIndex(x => x.id === staffProfile?.id);
+      if (myIdx > 0) {
+        const myRow = arr.splice(myIdx, 1)[0];
+        arr.unshift(myRow);
+      }
+    }
+
+    return arr;
+  }, [members, staffProfile, isAdmin]);
 
   // ======== UI render ========
   return (
@@ -764,7 +784,7 @@ export default function Home() {
               </tr>
             </thead>
             <tbody>
-              {members.map((profile) => {
+              {sortedMembers.map((profile, idx, arr) => {
                 const rowCanEdit = !!loggedInName && canEdit(profile.id);
 
                 let jobTitle = "";
@@ -791,18 +811,26 @@ export default function Home() {
                 let totalHours = 0;
                 days.forEach(d => {
                   const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                  // shiftMap内, .value
                   const shiftKey = shiftMap?.[profile.staff_name]?.[dayStr]?.value;
                   if (!shiftKey) return;
                   const pat = allPatterns.find(p => p.pattern_key === shiftKey);
                   if (pat) totalHours += pat.work_hours;
                 });
 
+                // 職種間のボーダー判定: この行と次の行で職種カテゴリが違えば強い枠線
+                let borderClass = "";
+                const thisCategory = jobTitleCategory(profile.job_title);
+                const nextCategory = arr[idx + 1] ? jobTitleCategory(arr[idx + 1].job_title) : null;
+                if (nextCategory !== null && nextCategory !== undefined && thisCategory !== nextCategory) {
+                  borderClass = " border-b-4 border-gray-400";
+                }
+
                 const trClassName =
                   "h-11" +
                   (!rowCanEdit
                     ? " bg-slate-50 text-gray-400"
-                    : "");
+                    : "") +
+                  borderClass;
 
                 const staffNameTextClass = 'truncate ml-1' + (!rowCanEdit ? ' text-gray-400' : '');
                 const jobTitleClass = 'text-[10px] font-normal ml-1' +
@@ -810,7 +838,7 @@ export default function Home() {
 
                 return (
                   <tr key={profile.id || profile.staff_name} className={trClassName}>
-                    <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all text-slate-800 min-w-[140px] w-[140px]${!rowCanEdit ? ' bg-slate-50 text-gray-400' : ''}`}>
+                    <td className={`sticky left-0 z-[90] p-2 border-b border-r border-slate-200 !bg-white font-bold transition-all text-slate-800 min-w-[140px] w-[140px]${!rowCanEdit ? ' bg-slate-50 text-gray-400' : ''}${borderClass}`}>
                       <div className="flex flex-col">
                         <span className={staffNameTextClass}>{profile.staff_name}</span>
                         <span className={jobTitleClass}>
@@ -829,6 +857,7 @@ export default function Home() {
                       const editable = (viewMode === "plan") && !!loggedInName && canEdit(profile.id);
                       const isEditing = editingShift && editingShift.staff_name === profile.staff_name && editingShift.date === dayStr;
                       const cellKey = `${profile.staff_name}_${dayStr}`;
+                      // セル分けについてはそのまま
                       return renderCell(
                         profile,
                         d,
@@ -841,7 +870,7 @@ export default function Home() {
                         cellKey
                       );
                     })}
-                    <td className={`border-b border-slate-200 text-center font-bold bg-slate-50 text-[10px]${!rowCanEdit ? ' text-gray-400' : ''}`}>
+                    <td className={`border-b border-slate-200 text-center font-bold bg-slate-50 text-[10px]${!rowCanEdit ? ' text-gray-400' : ''}${borderClass}`}>
                       {totalHours}
                     </td>
                   </tr>
@@ -857,7 +886,7 @@ export default function Home() {
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
                       {allPatterns.map(pt => {
-                        const count = members.filter(n => {
+                        const count = sortedMembers.filter(n => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
                           return shiftMap?.[n.staff_name]?.[dayStr]?.value === pt.pattern_key;
                         }).length;
