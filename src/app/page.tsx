@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -214,82 +214,74 @@ export default function Home() {
 
   const [isSaving, setIsSaving] = useState(false);
 
-  // 編集セルの select DOM ref を記録する（フォーカス制御のため）
-  const selectRef = useRef<HTMLSelectElement | null>(null);
+  // 編集セルの select DOM ref を記録（グローバルで不要。CellSelect内ローカルにする）
+  // const selectRef = useRef<HTMLSelectElement | null>(null);
 
-  // 編集モード時、自動的にプルダウンにフォーカスを当てる
-  useEffect(() => {
-    if (editingShift && selectRef.current) {
-      // setTimeoutで親レンダ後に実行
-      setTimeout(() => {
-        try {
-          selectRef.current?.focus();
-        } catch (e) {}
-      }, 1);
-    }
-  }, [editingShift]);
+  // 編集モード時、自動的にプルダウンにフォーカスを当てる（不要: セレクトにautoFocusを付与）
 
   // 編集開始
-  const handleCellEdit = (staff_id: string, date: string) => {
+  const handleCellEdit = useCallback((staff_id: string, date: string) => {
     setEditingShift({
       staff_id,
       date,
     });
-  };
+  }, []);
 
-  // セル保存: 選択を確定したときのみ handleSave を走らせ、保存・表示更新・計算まで統合
-  const handleSave = async (staff_id: string, date: string, value: string) => {
-    if (viewMode !== "plan" || !departmentId) return;
-    setIsSaving(true);
-    // ↓ pattern_key チェック
-    const isValidPatternKey =
-      value === "" || allPatterns.some(pt => pt.pattern_key === value);
-    if (!isValidPatternKey) {
-      setIsSaving(false);
-      setEditingShift(null);
-      return;
-    }
-    try {
-      let changedRecords: ShiftRecord[] = [...shiftRecords];
-      const idx = changedRecords.findIndex(
-        s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
-      );
-      if (idx >= 0) {
-        // 既存: update
-        const { data, error } = await supabase
-          .from("shifts")
-          .update({ shift_type: value === "" ? null : value })
-          .eq("id", changedRecords[idx].id)
-          .single();
-        if (!error && data) {
-          changedRecords[idx] = { ...changedRecords[idx], shift_type: value === "" ? null : value };
-        }
-      } else if (value !== "") {
-        // 新規: insert
-        const { data, error } = await supabase
-          .from("shifts")
-          .insert([
-            {
-              staff_id: staff_id,
-              date: date,
-              shift_type: value,
-              mode: "plan",
-            }
-          ])
-          .single();
-        if (!error && data) {
-          changedRecords.push(data);
-        }
+  // セル保存
+  const handleSave = useCallback(
+    async (staff_id: string, date: string, value: string) => {
+      if (viewMode !== "plan" || !departmentId) return;
+      setIsSaving(true);
+      const isValidPatternKey =
+        value === "" || allPatterns.some(pt => pt.pattern_key === value);
+      if (!isValidPatternKey) {
+        setIsSaving(false);
+        setEditingShift(null);
+        return;
       }
-      setShiftRecords(changedRecords);
-      setEditingShift(null);
-    } catch {
-      setEditingShift(null);
-    }
-    setIsSaving(false);
-  };
+      try {
+        let changedRecords: ShiftRecord[] = [...shiftRecords];
+        const idx = changedRecords.findIndex(
+          s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
+        );
+        if (idx >= 0) {
+          // 既存: update
+          const { data, error } = await supabase
+            .from("shifts")
+            .update({ shift_type: value === "" ? null : value })
+            .eq("id", changedRecords[idx].id)
+            .single();
+          if (!error && data) {
+            changedRecords[idx] = { ...changedRecords[idx], shift_type: value === "" ? null : value };
+          }
+        } else if (value !== "") {
+          // 新規: insert
+          const { data, error } = await supabase
+            .from("shifts")
+            .insert([
+              {
+                staff_id: staff_id,
+                date: date,
+                shift_type: value,
+                mode: "plan",
+              }
+            ])
+            .single();
+          if (!error && data) {
+            changedRecords.push(data);
+          }
+        }
+        setShiftRecords(changedRecords);
+        setEditingShift(null);
+      } catch {
+        setEditingShift(null);
+      }
+      setIsSaving(false);
+    },
+    [viewMode, departmentId, allPatterns, shiftRecords]
+  );
 
-  // 外部クリック/blurで編集解除：但しプルダウン選択中は発火しない（onMouseDown伝播止めにて実現）
+  // 外部クリック/blurで編集解除（プルダウンではリスナー不要になるので残すが、select自体のonBlurはsetTimeout遅延）
   useEffect(() => {
     if (!editingShift) return;
     const handler = (e: MouseEvent) => {
@@ -376,6 +368,118 @@ export default function Home() {
     return allPatterns.filter(pt => ids.includes(pt.id));
   }
 
+  // セル編集用セレクトを独立コンポーネント化
+  type CellSelectProps = {
+    value: string;
+    options: ShiftPattern[];
+    disabled: boolean;
+    onChange: (v: string) => void;
+    onBlur: () => void;
+  };
+
+  const CellSelect = React.memo((props: CellSelectProps) => {
+    const { value, options, disabled, onChange, onBlur } = props;
+    // ローカルのrefを個別に持つ
+    const selectRef = useRef<HTMLSelectElement | null>(null);
+
+    // 初回マウント時autoFocus
+    useEffect(() => {
+      if (selectRef.current) {
+        selectRef.current.focus();
+      }
+    }, []);
+
+    // onBlurを数ms遅延実行（クリック伝播防止＆即時解除バグ回避用）
+    const handleBlurDelayed = useCallback((e: React.FocusEvent<HTMLSelectElement>) => {
+      e.stopPropagation();
+      setTimeout(() => {
+        onBlur();
+      }, 10);
+    }, [onBlur]);
+
+    return (
+      <select
+        ref={selectRef}
+        className="border px-2 py-1 rounded bg-white text-xs w-full"
+        value={value}
+        disabled={disabled}
+        tabIndex={0}
+        style={{ minWidth: 80 }}
+        autoFocus
+        // onClickとonMouseDownで伝播停止
+        onClick={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
+        // 即保存
+        onChange={e => onChange(e.target.value)}
+        // onBlur時にはタイムアウトで解除
+        onBlur={handleBlurDelayed}
+      >
+        <option value="">-</option>
+        {options.map(pt => (
+          <option key={pt.id} value={pt.pattern_key}>{pt.pattern_name}</option>
+        ))}
+      </select>
+    );
+  });
+  CellSelect.displayName = "CellSelect";
+
+  // 各セルのレンダリングをuseCallbackで安定化
+  const renderCell = useCallback(
+    (
+      profile: StaffMasterProfile,
+      day: number,
+      info: ReturnType<typeof getDayInfo>,
+      dayStr: string,
+      shiftValue: string,
+      availablePatterns: ShiftPattern[],
+      editable: boolean,
+      isEditing: boolean,
+      cellKey: string
+    ) => {
+      if (isEditing) {
+        return (
+          <td
+            key={cellKey}
+            className={`border-r border-b border-slate-100 text-center ${info.bgColor} relative`}
+          >
+            <CellSelect
+              value={shiftValue || ""}
+              options={availablePatterns}
+              disabled={isSaving}
+              onChange={async (v) => {
+                await handleSave(profile.id, dayStr, v);
+                setEditingShift(null);
+              }}
+              onBlur={() => {
+                // 即時解除だとバグるのでsetTimeoutで遅らせる(詳細はCellSelect内)
+                setEditingShift(null);
+              }}
+            />
+          </td>
+        );
+      }
+      return (
+        <td
+          key={cellKey}
+          className={`border-r border-b border-slate-100 text-center cursor-pointer ${info.bgColor} transition hover:bg-blue-100 relative`}
+          tabIndex={0}
+          onClick={e => {
+            e.stopPropagation();
+            if (editable) handleCellEdit(profile.id, dayStr);
+          }}
+        >
+          {
+            shiftValue
+              ? (allPatterns.find(p => p.pattern_key === shiftValue)?.pattern_name || shiftValue)
+              : "-"
+          }
+        </td>
+      );
+    },
+    [isSaving, handleSave, allPatterns, handleCellEdit]
+  );
+
+  // 必要なprops配列外でループ展開
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
       {/* 1. ヘッダー */}
@@ -486,64 +590,17 @@ export default function Home() {
                       let shiftValue = shiftMap?.[profile.id]?.[dayStr] ?? "";
                       const editable = viewMode === "plan" && !!loggedInName;
                       const isEditing = editingShift && editingShift.staff_id === profile.id && editingShift.date === dayStr;
-
-                      // 固定key属性(レンダ安定化)
                       const cellKey = `${profile.id}_${dayStr}`;
-
-                      if (isEditing) {
-                        return (
-                          <td
-                            key={cellKey}
-                            className={`border-r border-b border-slate-100 text-center ${info.bgColor} relative`}
-                          >
-                            <select
-                              ref={selectRef}
-                              className="border px-2 py-1 rounded bg-white text-xs w-full"
-                              value={shiftValue || ""}
-                              disabled={isSaving}
-                              tabIndex={0}
-                              style={{ minWidth: 80 }}
-                              // onClickとonMouseDownで伝播停止
-                              onClick={e => e.stopPropagation()}
-                              onMouseDown={e => e.stopPropagation()}
-                              // onChangeで即保存→編集解除
-                              onChange={async (e) => {
-                                const v = e.target.value;
-                                await handleSave(profile.id, dayStr, v);
-                                setEditingShift(null); // handleSave内でも解除するが念のため
-                              }}
-                              // onBlurで編集解除(ただし選択確定時はonChangeで解除済み)
-                              onBlur={e => {
-                                // イベント伝播を止めて外部クリックバブリング対策
-                                e.stopPropagation();
-                                setEditingShift(null);
-                              }}
-                            >
-                              <option value="">-</option>
-                              {availablePatterns.map(pt => (
-                                <option key={pt.id} value={pt.pattern_key}>{pt.pattern_name}</option>
-                              ))}
-                            </select>
-                          </td>
-                        );
-                      }
-
-                      return (
-                        <td
-                          key={cellKey}
-                          className={`border-r border-b border-slate-100 text-center cursor-pointer ${info.bgColor} transition hover:bg-blue-100 relative`}
-                          tabIndex={0}
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (editable) handleCellEdit(profile.id, dayStr);
-                          }}
-                        >
-                          {
-                            shiftValue
-                              ? (allPatterns.find(p => p.pattern_key === shiftValue)?.pattern_name || shiftValue)
-                              : "-"
-                          }
-                        </td>
+                      return renderCell(
+                        profile,
+                        d,
+                        info,
+                        dayStr,
+                        shiftValue,
+                        availablePatterns,
+                        editable,
+                        !!isEditing,
+                        cellKey
                       );
                     })}
                     <td className="border-b border-slate-200 text-center font-bold bg-slate-50 text-[10px]">
