@@ -42,17 +42,17 @@ export default function Home() {
   // メンバ一覧（表示の基礎とする）
   const [members, setMembers] = useState<StaffMasterProfile[]>([]);
 
-  // 勤務パターン・マスタ
-  const [shiftPatterns, setShiftPatterns] = useState<ShiftPattern[]>([]);
+  // 勤務パターン・マスタ（※改修：allPatterns で全件を保持）
+  const [allPatterns, setAllPatterns] = useState<ShiftPattern[]>([]);
 
-  // shift_patternsマスタ 一度だけ取得
+  // shift_patterns マスタ 一度だけ取得
   useEffect(() => {
     const fetchShiftPatterns = async () => {
       const { data, error } = await supabase
         .from("shift_patterns")
-        .select("id,key,name");
+        .select("*"); // 全カラムを取得
       if (!error && Array.isArray(data)) {
-        setShiftPatterns(data as ShiftPattern[]);
+        setAllPatterns(data as ShiftPattern[]);
       }
     };
     fetchShiftPatterns();
@@ -225,8 +225,9 @@ export default function Home() {
     });
   };
 
-  // セル保存（onChange発火専用：即保存 & 描画即反映）
-  const saveShiftInstant = async (staff_id: string, date: string, value: string) => {
+  // セル保存 onChange発火専用：即保存 & 描画即反映
+  // --- 指示対応：onChangeでhandleSaveが必ず走るようここは維持 ---
+  const handleSave = async (staff_id: string, date: string, value: string) => {
     if (
       viewMode !== "plan" ||
       !departmentId
@@ -240,8 +241,6 @@ export default function Home() {
       const idx = changedRecords.findIndex(
         s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
       );
-      let result;
-      // 空文字はnull保存
       if (idx >= 0) {
         // 既存: update
         const { data, error } = await supabase
@@ -250,7 +249,6 @@ export default function Home() {
           .eq("id", changedRecords[idx].id)
           .single();
         if (!error && data) {
-          // Recordのstate即時更新
           changedRecords[idx] = { ...changedRecords[idx], shift_type: value === "" ? null : value };
         }
       } else if (value !== "") {
@@ -275,7 +273,7 @@ export default function Home() {
     setIsSaving(false);
   };
 
-  // 外部クリックで編集解除もOK（ただ選択UIでは出さないのでほぼ不要）
+  // 外部クリックで編集解除（選択UIでは出さないのでほぼ不要）
   useEffect(() => {
     if (!editingShift) return;
     const handler = (e: MouseEvent) => {
@@ -360,49 +358,77 @@ export default function Home() {
     }
   }, [members]);
 
-  // ユーザごとに使えるパターン（shift_patternsからwork_patterns.uuid参照でfilter）
-  const getAvailablePatterns = (
-    profile: StaffMasterProfile
-  ): ShiftPattern[] => {
-    let patternKeysOrUuids: string[] = [];
-    if (profile?.work_patterns) {
-      if (typeof profile.work_patterns === "string") {
-        try {
-          const parsed = JSON.parse(profile.work_patterns);
-          if (Array.isArray(parsed)) {
-            patternKeysOrUuids = parsed.map((x: any) => x?.key || x?.id || x).filter(Boolean);
-          } else if (parsed && typeof parsed === "object") {
-            if (parsed.key) patternKeysOrUuids = [parsed.key];
-            else if (parsed.id) patternKeysOrUuids = [parsed.id];
-          }
-        } catch {
-          patternKeysOrUuids = [];
+  // 指示：ユーザごとに使えるパターン（allPatternsからstaff.work_patternsのuuid/id一致でfilter）
+  // セーフパース関数
+  function parsePatternUuids(wp: any): string[] {
+    // null や undefined
+    if (!wp) return [];
+    // JSONArray
+    if (Array.isArray(wp)) {
+      return wp
+        .map((x: any) => x?.id || x?.key || x)
+        .filter(Boolean)
+        .map(String);
+    }
+    // 文字列→JSON parse or {uuid,uuid}風など
+    if (typeof wp === "string") {
+      try {
+        // 配列JSONパース可能な場合
+        const parsed = JSON.parse(wp);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .map((x: any) => x?.id || x?.key || x)
+            .filter(Boolean)
+            .map(String);
         }
-      } else if (Array.isArray(profile.work_patterns)) {
-        patternKeysOrUuids = (profile.work_patterns as any[])
-          .map((x: any) => x?.key || x?.id || x)
-          .filter(Boolean);
-      } else if (
-        typeof profile.work_patterns === "object" &&
-        profile.work_patterns !== null
-      ) {
-        if ((profile.work_patterns as any).key)
-          patternKeysOrUuids = [(profile.work_patterns as any).key];
-        else if ((profile.work_patterns as any).id)
-          patternKeysOrUuids = [(profile.work_patterns as any).id];
+        // オブジェクト(JSON)
+        if (parsed && typeof parsed === "object") {
+          if (parsed.id) return [String(parsed.id)];
+          if (parsed.key) return [String(parsed.key)];
+        }
+      } catch {
+        // {uuid,uuid}フォーマット ([{A,B}]や'["id","id"]'でない)→手動split
+        if (wp.startsWith('{') && wp.endsWith('}')) {
+          return wp
+            .substring(1, wp.length - 1)
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .map(String);
+        }
+        // カンマ区切り
+        if (wp.includes(',')) {
+          return wp.split(',').map(s => s.trim()).filter(Boolean).map(String);
+        }
+        // 素パターンID1個
+        if (wp.length > 0) {
+          return [wp];
+        }
       }
     }
+    // オブジェクト（1つだけパターンを持つ場合）
+    if (typeof wp === "object" && wp !== null) {
+      if ((wp as any).id) return [String((wp as any).id)];
+      if ((wp as any).key) return [String((wp as any).key)];
+    }
+    return [];
+  }
 
-    // IDかkey一致で抽出
-    return shiftPatterns.filter(
-      (sp) =>
-        patternKeysOrUuids.some(
-          (key) =>
-            sp.key === key ||
-            sp.id === key
-        )
+  function getAvailablePatterns(profile: StaffMasterProfile): ShiftPattern[] {
+    // 指示：もし空配列ならallPatterns全体を出す（プルダウン空空問題回避）
+    const ids = parsePatternUuids(profile?.work_patterns);
+    if (
+      !ids ||
+      (Array.isArray(ids) && ids.length === 0)
+    ) {
+      // デバッグ時は全パターン出す
+      return allPatterns;
+    }
+    // id/uuidと一致する全パターンを抽出
+    return allPatterns.filter(
+      (pt) => ids.includes(pt.id) || ids.includes(pt.key)
     );
-  };
+  }
 
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
@@ -488,7 +514,7 @@ export default function Home() {
                   }
                 }
 
-                // 勤務パターン - shift_patterns x work_patterns(uuid or key or id)
+                // 勤務パターン - allPatterns x work_patterns(uuid or key or id)
                 const availablePatterns = getAvailablePatterns(profile);
 
                 return (
@@ -522,16 +548,17 @@ export default function Home() {
                               value={shiftValue || ""}
                               autoFocus
                               disabled={isSaving}
+                              // onChange: onChangeで即時 handleSave
                               onChange={async (e) => {
                                 const v = e.target.value;
-                                await saveShiftInstant(profile.id, dayStr, v);
+                                await handleSave(profile.id, dayStr, v);
                               }}
                               onClick={e => e.stopPropagation()}
                               style={{ minWidth: 80 }}
                             >
                               <option value="">-</option>
                               {availablePatterns.map(pt => (
-                                <option key={pt.key} value={pt.key}>
+                                <option key={pt.key ?? pt.id} value={pt.key ?? pt.id}>
                                   {pt.name}
                                 </option>
                               ))}
@@ -567,8 +594,8 @@ export default function Home() {
                           return shiftMap?.[profile.id]?.[dayStr] === t.key || shiftMap?.[profile.id]?.[dayStr] === t.id;
                         }).length;
                         return (
-                          <span key={t.key} className="ml-1">
-                            {t.key}:{count}&nbsp;
+                          <span key={t.key ?? t.id} className="ml-1">
+                            {(t.key ?? t.id) || '-'}:{count}&nbsp;
                           </span>
                         );
                       })}
