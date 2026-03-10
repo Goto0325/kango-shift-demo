@@ -24,6 +24,12 @@ type ShiftRecord = {
   mode: string;
 };
 
+type ShiftPattern = {
+  id: string;
+  key: string;
+  name: string;
+};
+
 export default function Home() {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
@@ -35,6 +41,22 @@ export default function Home() {
 
   // メンバ一覧（表示の基礎とする）
   const [members, setMembers] = useState<StaffMasterProfile[]>([]);
+
+  // 勤務パターン・マスタ
+  const [shiftPatterns, setShiftPatterns] = useState<ShiftPattern[]>([]);
+
+  // shift_patternsマスタ 一度だけ取得
+  useEffect(() => {
+    const fetchShiftPatterns = async () => {
+      const { data, error } = await supabase
+        .from("shift_patterns")
+        .select("id,key,name");
+      if (!error && Array.isArray(data)) {
+        setShiftPatterns(data as ShiftPattern[]);
+      }
+    };
+    fetchShiftPatterns();
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -69,7 +91,6 @@ export default function Home() {
   // 部署内全職員データ取得＋自分の行1行目ルール
   useEffect(() => {
     const fetchMembers = async () => {
-      // departmentIdの型（数値または文字列）でチェック、null/undefined/0/空文字でなければ検索
       const validDep =
         departmentId !== null &&
         departmentId !== undefined &&
@@ -77,21 +98,15 @@ export default function Home() {
         !(typeof departmentId === "number" && isNaN(departmentId)) &&
         !(typeof departmentId === "number" && departmentId === 0) &&
         !(typeof departmentId === "string" && (departmentId === "0" || departmentId.trim() === ""));
-
       if (validDep) {
-        // 部署IDが有効
-        console.log("取得した部署ID:", departmentId);
         const { data, error } = await supabase
           .from("staff_master")
           .select("*")
           .eq("department_id", departmentId)
           .order("staff_name", { ascending: true });
 
-        console.log("マスタ取得結果:", data);
-
         if (!error && Array.isArray(data)) {
           let membersArr = [...data];
-          // ログイン者をリスト先頭に
           if (staffProfile) {
             const idx = membersArr.findIndex((s: any) => s.id === staffProfile.id);
             if (idx >= 0) {
@@ -99,35 +114,23 @@ export default function Home() {
               membersArr = [me, ...membersArr];
             }
           }
-          // データが0件の場合でも自分だけは表示
           if (membersArr.length === 0 && staffProfile) {
             setMembers([staffProfile]);
-            console.error("エラー: 部署の職員データが0件ですが、自分のみ表示します。");
           } else if (membersArr.length > 0) {
             setMembers(membersArr as StaffMasterProfile[]);
-            console.log("表示する職員:", membersArr);
           } else if (staffProfile) {
-            // 念のため、どんな場合でも自分いるなら自分のみ表示
             setMembers([staffProfile]);
           } else {
             setMembers([]);
-            console.error("エラー: 部署の職員データが0件です。");
           }
         } else {
-          // 読み込み失敗や謎データも自分だけは表示
           if (staffProfile) {
             setMembers([staffProfile]);
-            console.error("エラー: 部署の職員データ取得失敗または0件ですが、自分のみ表示します。");
           } else {
             setMembers([]);
-            console.error("エラー: 部署の職員データ取得失敗または0件です。");
           }
         }
       } else {
-        // departmentIdが未指定や不正な場合
-        if (departmentId !== null) {
-          console.error("エラー: 部署ID指定が不正です。");
-        }
         if (staffProfile) {
           setMembers([staffProfile]);
         } else {
@@ -210,8 +213,6 @@ export default function Home() {
     shift_type: string | null;
   } | null>(null);
 
-  // 編集中の値(選択)
-  const [editValue, setEditValue] = useState<string | null>(null);
   // 編集セル用保存中フラグ
   const [isSaving, setIsSaving] = useState(false);
 
@@ -222,83 +223,63 @@ export default function Home() {
       date,
       shift_type: current,
     });
-    setEditValue(current);
   };
 
-  // 編集確定（修正：editValueが空文字 '' の場合も保存できるよう修正）
-  const saveShift = async () => {
+  // セル保存（onChange発火専用：即保存 & 描画即反映）
+  const saveShiftInstant = async (staff_id: string, date: string, value: string) => {
     if (
-      !editingShift ||
       viewMode !== "plan" ||
-      !departmentId ||
-      editValue === null // ←空文字 '' は許可
+      !departmentId
     ) return;
     setIsSaving(true);
     try {
-      const existing = shiftRecords.find(
-        s => s.staff_id === editingShift.staff_id && s.date === editingShift.date && s.mode === "plan"
+      // UI先に更新
+      setEditingShift(null);
+
+      let changedRecords = [...shiftRecords];
+      const idx = changedRecords.findIndex(
+        s => s.staff_id === staff_id && s.date === date && s.mode === "plan"
       );
       let result;
-      if (existing) {
+      // 空文字はnull保存
+      if (idx >= 0) {
+        // 既存: update
         const { data, error } = await supabase
           .from("shifts")
-          .update({ shift_type: editValue === "" ? null : editValue })
-          .eq("id", existing.id)
+          .update({ shift_type: value === "" ? null : value })
+          .eq("id", changedRecords[idx].id)
           .single();
         if (!error && data) {
-          result = data;
+          // Recordのstate即時更新
+          changedRecords[idx] = { ...changedRecords[idx], shift_type: value === "" ? null : value };
         }
-      } else if (editValue !== "") { // 新規登録は空でなければ
+      } else if (value !== "") {
+        // 新規: insert
         const { data, error } = await supabase
           .from("shifts")
           .insert([
             {
-              staff_id: editingShift.staff_id,
-              date: editingShift.date,
-              shift_type: editValue,
+              staff_id: staff_id,
+              date: date,
+              shift_type: value,
               mode: "plan",
             }
           ])
           .single();
         if (!error && data) {
-          result = data;
+          changedRecords.push(data);
         }
       }
-      setEditingShift(null);
-      setEditValue(null);
-      // save後リロード
-      const d1 = new Date(year, month - 1, 1);
-      const d2 = new Date(year, month, 0);
-      const startDate = d1.toISOString().slice(0, 10);
-      const endDate = d2.toISOString().slice(0, 10);
-      let staffIds = members.map((s) => s.id);
-      if (staffIds.length === 0 && staffProfile?.id) {
-        staffIds = [staffProfile.id];
-      }
-      const { data: refreshed, error: refError } = await supabase
-        .from("shifts")
-        .select("*")
-        .in("staff_id", staffIds)
-        .gte("date", startDate)
-        .lte("date", endDate)
-        .eq("mode", viewMode);
-      setShiftRecords(!refError && refreshed ? refreshed : []);
+      setShiftRecords(changedRecords);
     } catch {}
     setIsSaving(false);
   };
 
-  // 他箇所クリックでキャンセル
-  const handleCancel = () => {
-    setEditingShift(null);
-    setEditValue(null);
-  };
-
-  // 画面外クリック等で編集キャンセル
+  // 外部クリックで編集解除もOK（ただ選択UIでは出さないのでほぼ不要）
   useEffect(() => {
     if (!editingShift) return;
     const handler = (e: MouseEvent) => {
       setEditingShift(null);
-      setEditValue(null);
     };
     window.addEventListener("click", handler, { capture: true });
     return () => window.removeEventListener("click", handler, { capture: true });
@@ -373,11 +354,55 @@ export default function Home() {
   // デバッグ
   useEffect(() => {
     if (members.length === 0) {
-      console.error("エラー: 表示する職員データが0件です。");
+      // console.error("エラー: 表示する職員データが0件です。");
     } else {
-      console.log("表示する職員:", members);
+      // console.log("表示する職員:", members);
     }
   }, [members]);
+
+  // ユーザごとに使えるパターン（shift_patternsからwork_patterns.uuid参照でfilter）
+  const getAvailablePatterns = (
+    profile: StaffMasterProfile
+  ): ShiftPattern[] => {
+    let patternKeysOrUuids: string[] = [];
+    if (profile?.work_patterns) {
+      if (typeof profile.work_patterns === "string") {
+        try {
+          const parsed = JSON.parse(profile.work_patterns);
+          if (Array.isArray(parsed)) {
+            patternKeysOrUuids = parsed.map((x: any) => x?.key || x?.id || x).filter(Boolean);
+          } else if (parsed && typeof parsed === "object") {
+            if (parsed.key) patternKeysOrUuids = [parsed.key];
+            else if (parsed.id) patternKeysOrUuids = [parsed.id];
+          }
+        } catch {
+          patternKeysOrUuids = [];
+        }
+      } else if (Array.isArray(profile.work_patterns)) {
+        patternKeysOrUuids = (profile.work_patterns as any[])
+          .map((x: any) => x?.key || x?.id || x)
+          .filter(Boolean);
+      } else if (
+        typeof profile.work_patterns === "object" &&
+        profile.work_patterns !== null
+      ) {
+        if ((profile.work_patterns as any).key)
+          patternKeysOrUuids = [(profile.work_patterns as any).key];
+        else if ((profile.work_patterns as any).id)
+          patternKeysOrUuids = [(profile.work_patterns as any).id];
+      }
+    }
+
+    // IDかkey一致で抽出
+    return shiftPatterns.filter(
+      (sp) =>
+        patternKeysOrUuids.some(
+          (key) =>
+            sp.key === key ||
+            sp.id === key
+        )
+    );
+  };
 
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
@@ -463,48 +488,8 @@ export default function Home() {
                   }
                 }
 
-                // パターン（work_patterns）はJSON配列。配列ならkey, nameで形作る
-                let patterns: { key: string, name: string }[] = [];
-                if (profile.work_patterns) {
-                  if (typeof profile.work_patterns === "string") {
-                    try {
-                      const parsed = JSON.parse(profile.work_patterns);
-                      if (Array.isArray(parsed)) {
-                        patterns = parsed
-                          .map((x: any) => ({
-                            key: (x?.key || x?.name || x?.label || '').toString(),
-                            name: (x?.name || x?.label || x?.key || '').toString()
-                          }))
-                          .filter(x => x.key && x.name);
-                      } else if (parsed && typeof parsed === "object" && (parsed.name || parsed.label || parsed.key)) {
-                        patterns = [{
-                          key: (parsed.key || parsed.name || parsed.label).toString(),
-                          name: (parsed.name || parsed.label || parsed.key).toString()
-                        }];
-                      }
-                    } catch {
-                      patterns = [];
-                    }
-                  } else if (Array.isArray(profile.work_patterns)) {
-                    patterns = (profile.work_patterns as any[]).map((x: any) => ({
-                      key: (x?.key || x?.name || x?.label || '').toString(),
-                      name: (x?.name || x?.label || x?.key || '').toString()
-                    })).filter(x => x.key && x.name);
-                  } else if (
-                    typeof profile.work_patterns === "object" &&
-                    profile.work_patterns !== null &&
-                    (
-                      (profile.work_patterns as any).name ||
-                      (profile.work_patterns as any).label ||
-                      (profile.work_patterns as any).key
-                    )
-                  ) {
-                    patterns = [{
-                      key: ((profile.work_patterns as any).key || (profile.work_patterns as any).name || (profile.work_patterns as any).label).toString(),
-                      name: ((profile.work_patterns as any).name || (profile.work_patterns as any).label || (profile.work_patterns as any).key).toString(),
-                    }];
-                  }
-                }
+                // 勤務パターン - shift_patterns x work_patterns(uuid or key or id)
+                const availablePatterns = getAvailablePatterns(profile);
 
                 return (
                   <tr key={profile.id || profile.staff_name} className="h-11">
@@ -513,8 +498,8 @@ export default function Home() {
                         <span className="truncate ml-1">{profile.staff_name}</span>
                         <span className="text-[10px] text-gray-500 font-normal ml-1">
                           {jobTitle}
-                          {patterns.length > 0
-                            ? ` (${patterns.map(x => x.name).join(",")})`
+                          {availablePatterns.length > 0
+                            ? ` (${availablePatterns.map(x => x.name).join(",")})`
                             : ""}
                         </span>
                       </div>
@@ -524,63 +509,33 @@ export default function Home() {
                       const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
                       let shiftValue = shiftMap?.[profile.id]?.[dayStr] ?? "";
                       const editable = viewMode === "plan" && !!loggedInName;
-                      if (
-                        editingShift &&
-                        editingShift.staff_id === profile.id &&
-                        editingShift.date === dayStr
-                      ) {
+                      const isEditing = editingShift && editingShift.staff_id === profile.id && editingShift.date === dayStr;
+
+                      if (isEditing) {
                         return (
                           <td
                             key={d}
                             className={`border-r border-b border-slate-100 text-center ${info.bgColor} relative`}
                           >
-                            <form
-                              onSubmit={e => {
-                                e.preventDefault();
-                                saveShift();
+                            <select
+                              className="border px-2 py-1 rounded bg-white text-xs w-full"
+                              value={shiftValue || ""}
+                              autoFocus
+                              disabled={isSaving}
+                              onChange={async (e) => {
+                                const v = e.target.value;
+                                await saveShiftInstant(profile.id, dayStr, v);
                               }}
-                              className="flex items-center w-full h-full"
+                              onClick={e => e.stopPropagation()}
                               style={{ minWidth: 80 }}
                             >
-                              <select
-                                className="border px-2 py-1 rounded bg-white text-xs w-full"
-                                value={editValue === null ? "" : editValue}
-                                autoFocus
-                                disabled={isSaving}
-                                onChange={e => setEditValue(e.target.value)}
-                                onClick={e => e.stopPropagation()}
-                                // onBlur={saveShift} ← onBlurで保存は一旦やめて、失敗時(選択できない)を避ける
-                              >
-                                <option value="">-</option>
-                                {patterns.map(pt => (
-                                  <option key={pt.key} value={pt.key}>
-                                    {pt.name}
-                                  </option>
-                                ))}
-                              </select>
-                              <button
-                                type="submit"
-                                className="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-700"
-                                disabled={isSaving}
-                              >
-                                保存
-                              </button>
-                              <button
-                                type="button"
-                                className="ml-1 px-2 py-1 text-xs bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
-                                onClick={e => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleCancel();
-                                }}
-                                disabled={isSaving}
-                              >
-                                ｷｬﾝｾﾙ
-                              </button>
-                              {isSaving && (
-                                <span className="ml-2 text-xs text-blue-500 animate-pulse">保存中...</span>
-                              )}
-                            </form>
+                              <option value="">-</option>
+                              {availablePatterns.map(pt => (
+                                <option key={pt.key} value={pt.key}>
+                                  {pt.name}
+                                </option>
+                              ))}
+                            </select>
                           </td>
                         );
                       }
@@ -595,16 +550,21 @@ export default function Home() {
                             if (editable) handleCellEdit(profile.id, dayStr, shiftValue);
                           }}
                         >
-                          {shiftValue ? shiftValue : "-"}
+                          {/* 表示最適化：登録があれば名称、なければ "-" */}
+                          {
+                            shiftValue
+                              ? (availablePatterns.find(p => p.key === shiftValue || p.id === shiftValue)?.name || shiftValue)
+                              : "-"
+                          }
                         </td>
                       );
                     })}
                     {/* 合計欄：既存勤務パターン毎の合計 */}
                     <td className="border-b border-slate-200 text-center font-bold bg-slate-50 text-[10px]">
-                      {patterns.map(t => {
+                      {availablePatterns.map(t => {
                         const count = days.filter(d => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
-                          return shiftMap?.[profile.id]?.[dayStr] === t.key;
+                          return shiftMap?.[profile.id]?.[dayStr] === t.key || shiftMap?.[profile.id]?.[dayStr] === t.id;
                         }).length;
                         return (
                           <span key={t.key} className="ml-1">
@@ -625,6 +585,7 @@ export default function Home() {
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
                     <div className="flex flex-col justify-center items-center h-full gap-0">
+                      {/* 合計は代表パターン種別名でサマリーされるべきだが、ここは例のまま */}
                       {["日", "早", "遅", "夜"].map(type => {
                         const count = members.filter(n => {
                           const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
