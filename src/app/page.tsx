@@ -365,6 +365,7 @@ export default function Home() {
     });
   }, []);
 
+  // ======== Night-shift auto 明連動保存ロジック追加 ========
   const handleSave = useCallback(
     async (staff_id: string, date: string, value: string) => {
       if (!departmentId) return;
@@ -387,10 +388,74 @@ export default function Home() {
       const newShiftType = value === "" ? null : value;
       const is_actual = viewMode === "actual";
 
+      // 「夜勤」判定のため、対象pattern_key="夜"またはpattern_nameに"夜勤"含むもの
+      // まず夜勤(夜)・明け(明)のパターンキーを取得
+      const nightPatternKey = (() => {
+        // パターン名に「夜」または「夜勤」, またはpattern_key===夜
+        const byKey = allPatterns.find(pt => pt.pattern_key === "夜");
+        if (byKey) return byKey.pattern_key;
+        const byLabel = allPatterns.find(pt =>
+          pt.pattern_name.includes("夜勤") || pt.pattern_name === "夜" || pt.pattern_key === "夜"
+        );
+        if (byLabel) return byLabel.pattern_key;
+        return "夜"; // デフォルト
+      })();
+      const akePatternKey = (() => {
+        // 明け: pattern_key === "明" 優先, なければpattern_nameに「明け」が含まれるもの
+        const byKey = allPatterns.find(pt => pt.pattern_key === "明");
+        if (byKey) return byKey.pattern_key;
+        const byLabel = allPatterns.find(pt => pt.pattern_name.includes("明け"));
+        if (byLabel) return byLabel.pattern_key;
+        return "明"; // デフォルト
+      })();
+
+      // 下準備: 保存配列
+      const upsertRows = [
+        {
+          staff_name,
+          date,
+          is_actual,
+          shift_type: newShiftType,
+          updated_by: loggedInName,
+        }
+      ];
+
+      // 夜勤連動: もしvalueが夜勤なら、翌日に「明」（夜勤明け）も自動追加
+      let nextDayRow: null | ShiftRecordV2 = null;
+      let nextDayISO = '';
+      if (value === nightPatternKey) {
+        // 日付を1日進める
+        const [yyyy, mm, dd] = date.split('-').map(Number);
+        const currentDate = new Date(yyyy, mm - 1, dd);
+        const nextDay = new Date(currentDate);
+        nextDay.setDate(currentDate.getDate() + 1);
+        const yyyy2 = nextDay.getFullYear();
+        const mm2 = (nextDay.getMonth() + 1).toString().padStart(2, "0");
+        const dd2 = nextDay.getDate().toString().padStart(2, "0");
+        nextDayISO = `${yyyy2}-${mm2}-${dd2}`;
+        // upsertRowsにpush
+        upsertRows.push({
+          staff_name,
+          date: nextDayISO,
+          is_actual,
+          shift_type: akePatternKey,
+          updated_by: loggedInName,
+        });
+        nextDayRow = {
+          staff_name,
+          date: nextDayISO,
+          is_actual,
+          shift_type: akePatternKey,
+          updated_by: loggedInName,
+        };
+      }
+
+      // ローカルステート先更新: 「夜勤」本日、「明」翌日
       setShiftRecords((prev) => {
+        let replaced = [...prev];
+        // 本日分
         const keyMatch = (rec: ShiftRecordV2) =>
           rec.staff_name === staff_name && rec.date === date && rec.is_actual === is_actual;
-        let replaced = [...prev];
         const ix = replaced.findIndex(keyMatch);
         if (ix >= 0) {
           replaced[ix] = { ...replaced[ix], shift_type: newShiftType, updated_by: loggedInName };
@@ -403,18 +468,19 @@ export default function Home() {
             updated_by: loggedInName,
           });
         }
-        return [...replaced];
-      });
-
-      const upsertRows = [
-        {
-          staff_name,
-          date,
-          is_actual,
-          shift_type: newShiftType,
-          updated_by: loggedInName,
+        // 翌日明け分
+        if (nextDayRow) {
+          const keyMatchNext = (rec: ShiftRecordV2) =>
+            rec.staff_name === staff_name && rec.date === nextDayRow!.date && rec.is_actual === is_actual;
+          const ix2 = replaced.findIndex(keyMatchNext);
+          if (ix2 >= 0) {
+            replaced[ix2] = { ...replaced[ix2], shift_type: nextDayRow.shift_type, updated_by: loggedInName };
+          } else {
+            replaced.push(nextDayRow);
+          }
         }
-      ];
+        return replaced;
+      });
 
       try {
         const { data, error } = await supabase
@@ -427,6 +493,7 @@ export default function Home() {
           alert('保存に失敗しました: ' + error.message);
         } else if (data && Array.isArray(data)) {
           setShiftRecords((prev) => {
+            // 本日・翌日分それぞれmerge
             const keyMatch = (r: ShiftRecordV2, n: any) =>
               r.staff_name === n.staff_name && r.date === n.date && r.is_actual === !!n.is_actual;
             let replaced = [...prev];
@@ -446,7 +513,7 @@ export default function Home() {
                 replaced.push(cleaned);
               }
             });
-            return [...replaced];
+            return replaced;
           });
         }
       } finally {
