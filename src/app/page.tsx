@@ -573,72 +573,85 @@ export default function Home() {
     setIsGeneratingShifts(true);
     try {
       // メンバーlist
-      const _members = [...members]; // コピー
+      const _members = [...members];
       const _patterns = [...allPatterns];
       if (!_members.length) {
         alert('メンバーが存在しません');
         setIsGeneratingShifts(false);
         return;
       }
-      // 日付レンジ
       const yearStr = year;
       const monthStr = month.toString().padStart(2, '0');
       const daysCount = new Date(year, month, 0).getDate();
+      const dayList = Array.from({ length: daysCount }, (_, i) => i + 1);
 
-      // 1. 全削除（"plan"モード/該当月範囲のみ）
+      // 既存のshift（"plan"のみ取得、今月のみ）
+      const d1 = `${yearStr}-${monthStr}-01`;
+      const d2 = `${yearStr}-${monthStr}-${daysCount.toString().padStart(2, '0')}`;
+      let existedShifts: ShiftRecordV2[] = [];
       {
-        const d1 = `${yearStr}-${monthStr}-01`;
-        const d2 = `${yearStr}-${monthStr}-${daysCount.toString().padStart(2, '0')}`;
-        // department制限あり
-        let staffs: string[] = _members.map(s => s.staff_name);
-        await supabase
+        const { data, error } = await supabase
           .from("shifts")
-          .delete()
-          .in("staff_name", staffs)
-          .neq("is_actual", true)
+          .select("*")
+          .in("staff_name", _members.map(s => s.staff_name))
+          .eq("is_actual", false)
           .gte("date", d1)
           .lte("date", d2);
+
+        if (data && Array.isArray(data)) {
+          existedShifts = data.map((rec: any) => ({
+            id: rec.id,
+            staff_name: rec.staff_name,
+            date: rec.date,
+            is_actual: !!rec.is_actual,
+            shift_type: rec.shift_type,
+            updated_by: rec.updated_by ?? null,
+          }));
+        }
       }
 
-      // 配列: 日付リスト
-      const dayList = Array.from({ length: daysCount }, (_, i) => i + 1);
-      // 事前割当状態（staff名ごとに日:shift_type名マップ）
+      // 事前入力のセルは残す: staff_name, dateでマッピング
+      const readonlyShiftMap: { [staffName: string]: { [date: string]: string | null } } = {};
+      existedShifts.forEach(({ staff_name, date, shift_type }) => {
+        if (!readonlyShiftMap[staff_name]) readonlyShiftMap[staff_name] = {};
+        readonlyShiftMap[staff_name][date] = shift_type;
+      });
+
+      // シフト割当配列（既存入力優先）
       const assign: { [staffName: string]: { [date: string]: string } } = {};
       _members.forEach(m => {
         assign[m.staff_name] = {};
+        for (let d = 1; d <= daysCount; ++d) {
+          const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
+          // 既存入力ありならそれをセット
+          if (readonlyShiftMap[m.staff_name]?.[dateStr]) {
+            assign[m.staff_name][dateStr] = readonlyShiftMap[m.staff_name][dateStr]!;
+          }
+        }
       });
 
-      // -- night/ake配置を状態としてもったほうが公休判定時に便利
-      // 日付ごと: 配置済み職員名 set
-      const usedStaffByDay = dayList.reduce((acc, d) => {
-        const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
-        acc[dateStr] = new Set<string>();
-        return acc;
-      }, {} as { [date: string]: Set<string> });
-
-      // ==== ステップ1: 夜勤の配置 ====
+      // ステップ1: 夜勤配置（空セルのみ割当）
       for (const day of dayList) {
         const dateStr = `${yearStr}-${monthStr}-${day.toString().padStart(2, "0")}`;
-        // 前日のdateStr
+        // 前日
         const prevDate = new Date(year, month - 1, day);
         prevDate.setDate(prevDate.getDate() - 1);
         const prevDateStr = `${prevDate.getFullYear()}-${(prevDate.getMonth() + 1).toString().padStart(2, "0")}-${prevDate.getDate().toString().padStart(2, "0")}`;
 
-        // --- 看護師(2名)
+        // --- 看護師(2名)割当 空セルのみ
         const candidatesNurse = _members.filter(m => {
           const jt = getJobTitleString(m.job_title);
-          // 職種判定: 看護師
           if (!jt.includes("看護師")) return false;
-          // 夜勤IDチェック
           if (!(Array.isArray(m.work_patterns) && nightPatternId && m.work_patterns.includes(nightPatternId))) return false;
-          // 前日が夜勤で無い
+          // 前日夜勤でない
           if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
-          // すでにこの日夜勤配置されていない
+          // 既にこの日夜勤していない
           if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
+          // 既に入力ありならスキップ
+          if (assign[m.staff_name]?.[dateStr]) return false;
           return true;
         });
 
-        // 乱択2名
         let pickNurse: typeof candidatesNurse = [];
         if (candidatesNurse.length > 2) {
           const shuffle = candidatesNurse.slice().sort(() => Math.random() - 0.5);
@@ -648,29 +661,26 @@ export default function Home() {
         }
         for (const m of pickNurse) {
           assign[m.staff_name][dateStr] = nightPatternKey;
-          // 明け(翌日)も
+          // 明けも空なら自動付与
           const nextDate = new Date(year, month - 1, day);
           nextDate.setDate(nextDate.getDate() + 1);
           const nextDateStr = `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}-${nextDate.getDate().toString().padStart(2, "0")}`;
           if (!assign[m.staff_name][nextDateStr]) {
             assign[m.staff_name][nextDateStr] = akePatternKey;
           }
-          usedStaffByDay[dateStr].add(m.staff_name);
         }
 
-        // --- 介護士(1名)
+        // --- 介護士(1名)割当 空セルのみ
         const candidatesCare = _members.filter(m => {
           const jt = getJobTitleString(m.job_title);
-          // 職種判定: 介護士/助手
           if (!(jt.includes("介護") || jt.includes("助手"))) return false;
           if (!(Array.isArray(m.work_patterns) && nightPatternId && m.work_patterns.includes(nightPatternId))) return false;
-          // 前日夜勤でない
           if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
-          // 既にこの日夜勤していない
           if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
+          if (assign[m.staff_name]?.[dateStr]) return false;
           return true;
         });
-        // 乱択1名
+
         let pickCare: typeof candidatesCare = [];
         if (candidatesCare.length > 1) {
           const shuffle = candidatesCare.slice().sort(() => Math.random() - 0.5);
@@ -680,43 +690,44 @@ export default function Home() {
         }
         for (const m of pickCare) {
           assign[m.staff_name][dateStr] = nightPatternKey;
-          // 明け(翌日)も
+          // 明けも空なら自動付与
           const nextDate = new Date(year, month - 1, day);
           nextDate.setDate(nextDate.getDate() + 1);
           const nextDateStr = `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}-${nextDate.getDate().toString().padStart(2, "0")}`;
           if (!assign[m.staff_name][nextDateStr]) {
             assign[m.staff_name][nextDateStr] = akePatternKey;
           }
-          usedStaffByDay[dateStr].add(m.staff_name);
         }
       }
 
-      // ==== ステップ2: 公休配置（常勤のみ） ====
+      // ステップ2: 公休配置 空セルのみ
       for (const m of _members) {
         if (m.employment_status !== "常勤") continue;
-        // 休ノルマ
         const quota = getHolidayQuota(year, month);
-        // 夜勤明け以外の日一覧
-        // dayごとに、夜勤明け以外（night/ake含まない日）を抽出
+
+        // 夜勤明けを除く未入力の日だけ
         const availableDays: string[] = [];
         dayList.forEach(d => {
           const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
           const shiftType = assign[m.staff_name]?.[dateStr];
-          if (shiftType == nightPatternKey || shiftType == akePatternKey) return;
+          // 既に割当・入力済・夜勤や明けの場合、対象外
+          if (shiftType == nightPatternKey || shiftType == akePatternKey || shiftType) return;
           availableDays.push(dateStr);
         });
-        // 乱数シャッフルしてquotaぶん配置
+
         let restAssignDays = availableDays.sort(() => Math.random() - 0.5).slice(0, quota);
         for (const dateStr of restAssignDays) {
           assign[m.staff_name][dateStr] = restPatternKey;
         }
       }
 
-      // ==== 最後にshifts登録用オブジェクトへ変換し一括登録 ====
+      // 最後にshifts登録用オブジェクトへ（空セルはスキップ、既存入力以外のみ保存する）
       const upsertRows: ShiftRecordV2[] = [];
       for (const staff_name in assign) {
         for (const date in assign[staff_name]) {
           const shift_type = assign[staff_name][date];
+          // 既存入力と同じなら保存不要
+          if (readonlyShiftMap[staff_name]?.[date] === shift_type) continue;
           if (!shift_type) continue;
           upsertRows.push({
             staff_name,
@@ -727,21 +738,32 @@ export default function Home() {
           });
         }
       }
+      // データベース保存
       if (upsertRows.length > 0) {
-        // 50件ずつ分割アップサート
         for (let i = 0; i < upsertRows.length; i += 50) {
           const chunk = upsertRows.slice(i, i + 50);
           await supabase.from("shifts").upsert(chunk, { onConflict: 'staff_name,date,is_actual' });
         }
       }
 
-      // ステート更新もする
+      // ステートを更新
       setShiftRecords(prev => {
-        // "plan"だけ上書き
-        const newRecords = upsertRows.map(r => ({ ...r }));
-        // 前stateは実績or今月外を温存
-        const keep = prev.filter(x => x.is_actual || x.date.slice(0, 7) !== `${yearStr}-${monthStr}`);
-        return [...keep, ...newRecords];
+        // 既存planデータは上書き、actualや今月以外は保持
+        const planMap: { [key: string]: ShiftRecordV2 } = {};
+        for (const s of upsertRows) {
+          planMap[`${s.staff_name}_${s.date}`] = s;
+        }
+        return prev
+          .filter(x => x.is_actual || x.date.slice(0, 7) !== `${yearStr}-${monthStr}`)
+          .concat(
+            // 既存入力だったplanセル（実績false, 今月で、readonlyShiftMapに該当するもの）
+            existedShifts.filter(x =>
+              !x.is_actual &&
+              x.date.slice(0, 7) === `${yearStr}-${monthStr}` &&
+              readonlyShiftMap[x.staff_name]?.[x.date]
+            ),
+            upsertRows.map(r => ({ ...r }))
+          );
       });
 
     } catch (e) {
@@ -1048,7 +1070,7 @@ export default function Home() {
                   disabled={isGeneratingShifts}
                   onClick={async () => {
                     if (isGeneratingShifts) return;
-                    if (!window.confirm("現在のシフトが上書きされますがよろしいですか？")) return;
+                    if (!window.confirm("未入力のセルのみ自動入力されます。よろしいですか？")) return;
                     await generateShiftPhase1();
                   }}
                 >
@@ -1058,7 +1080,7 @@ export default function Home() {
                       作成中...
                     </span>
                   ) : (
-                    <span>自動作成（夜勤・公休）</span>
+                    <span>自動作成（未入力のみ）</span>
                   )}
                 </button>
               )}
