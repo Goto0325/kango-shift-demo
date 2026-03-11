@@ -110,6 +110,14 @@ function jobTitleKey(jobTitle: StaffMasterProfile["job_title"]): string {
   return t || "";
 }
 
+function getHolidayQuota(theYear: number, theMonth: number): number {
+  // 8月(8), 12月(12), 1月(1) => 10, 他は9
+  if (theMonth === 8 || theMonth === 12 || theMonth === 1) {
+    return 10;
+  }
+  return 9;
+}
+
 export default function Home() {
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(2);
@@ -152,6 +160,9 @@ export default function Home() {
   const [departmentId, setDepartmentId] = useState<number | string | null>(null);
   const [members, setMembers] = useState<StaffMasterProfile[]>([]);
   const [allPatterns, setAllPatterns] = useState<ShiftPattern[]>([]);
+
+  // ローディング状態：自動作成処理用
+  const [isGeneratingShifts, setIsGeneratingShifts] = useState(false);
 
   useEffect(() => {
     const fetchShiftPatterns = async () => {
@@ -524,6 +535,222 @@ export default function Home() {
     [viewMode, departmentId, allPatterns, canEdit, members, staffProfile?.staff_name]
   );
 
+  // ==== 追加: 自動シフト生成ロジック ====
+  // --- ナイトパターンIDと明パターンIDを決定
+  const nightPattern = useMemo(() => {
+    return allPatterns.find(pt =>
+      pt.pattern_key === "夜" ||
+      pt.pattern_name === "夜" ||
+      pt.pattern_name.includes("夜勤")
+    );
+  }, [allPatterns]);
+  const nightPatternKey = nightPattern?.pattern_key ?? "夜";
+  const nightPatternId = nightPattern?.id;
+
+  const akePattern = useMemo(() => {
+    return allPatterns.find(pt =>
+      pt.pattern_key === "明" ||
+      pt.pattern_name.includes("明け")
+    );
+  }, [allPatterns]);
+  const akePatternKey = akePattern?.pattern_key ?? "明";
+  const akePatternId = akePattern?.id;
+
+  const restPattern = useMemo(() => {
+    // 「休」または「休日」「有給」「有休」などを優先
+    return (
+      allPatterns.find(pt => pt.pattern_key === "休") ||
+      allPatterns.find(pt => pt.pattern_name.includes("休")) ||
+      allPatterns.find(pt => pt.pattern_name.includes("休日")) ||
+      allPatterns.find(pt => pt.pattern_name.includes("有給"))
+    );
+  }, [allPatterns]);
+  const restPatternKey = restPattern?.pattern_key ?? "休";
+
+  // --- 自動生成コア ---
+  const generateShiftPhase1 = useCallback(async () => {
+    // 処理中制御
+    setIsGeneratingShifts(true);
+    try {
+      // メンバーlist
+      const _members = [...members]; // コピー
+      const _patterns = [...allPatterns];
+      if (!_members.length) {
+        alert('メンバーが存在しません');
+        setIsGeneratingShifts(false);
+        return;
+      }
+      // 日付レンジ
+      const yearStr = year;
+      const monthStr = month.toString().padStart(2, '0');
+      const daysCount = new Date(year, month, 0).getDate();
+
+      // 1. 全削除（"plan"モード/該当月範囲のみ）
+      {
+        const d1 = `${yearStr}-${monthStr}-01`;
+        const d2 = `${yearStr}-${monthStr}-${daysCount.toString().padStart(2, '0')}`;
+        // department制限あり
+        let staffs: string[] = _members.map(s => s.staff_name);
+        await supabase
+          .from("shifts")
+          .delete()
+          .in("staff_name", staffs)
+          .neq("is_actual", true)
+          .gte("date", d1)
+          .lte("date", d2);
+      }
+
+      // 配列: 日付リスト
+      const dayList = Array.from({ length: daysCount }, (_, i) => i + 1);
+      // 事前割当状態（staff名ごとに日:shift_type名マップ）
+      const assign: { [staffName: string]: { [date: string]: string } } = {};
+      _members.forEach(m => {
+        assign[m.staff_name] = {};
+      });
+
+      // -- night/ake配置を状態としてもったほうが公休判定時に便利
+      // 日付ごと: 配置済み職員名 set
+      const usedStaffByDay = dayList.reduce((acc, d) => {
+        const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
+        acc[dateStr] = new Set<string>();
+        return acc;
+      }, {} as { [date: string]: Set<string> });
+
+      // ==== ステップ1: 夜勤の配置 ====
+      for (const day of dayList) {
+        const dateStr = `${yearStr}-${monthStr}-${day.toString().padStart(2, "0")}`;
+        // 前日のdateStr
+        const prevDate = new Date(year, month - 1, day);
+        prevDate.setDate(prevDate.getDate() - 1);
+        const prevDateStr = `${prevDate.getFullYear()}-${(prevDate.getMonth() + 1).toString().padStart(2, "0")}-${prevDate.getDate().toString().padStart(2, "0")}`;
+
+        // --- 看護師(2名)
+        const candidatesNurse = _members.filter(m => {
+          const jt = getJobTitleString(m.job_title);
+          // 職種判定: 看護師
+          if (!jt.includes("看護師")) return false;
+          // 夜勤IDチェック
+          if (!(Array.isArray(m.work_patterns) && nightPatternId && m.work_patterns.includes(nightPatternId))) return false;
+          // 前日が夜勤で無い
+          if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
+          // すでにこの日夜勤配置されていない
+          if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
+          return true;
+        });
+
+        // 乱択2名
+        let pickNurse: typeof candidatesNurse = [];
+        if (candidatesNurse.length > 2) {
+          const shuffle = candidatesNurse.slice().sort(() => Math.random() - 0.5);
+          pickNurse = shuffle.slice(0, 2);
+        } else {
+          pickNurse = candidatesNurse;
+        }
+        for (const m of pickNurse) {
+          assign[m.staff_name][dateStr] = nightPatternKey;
+          // 明け(翌日)も
+          const nextDate = new Date(year, month - 1, day);
+          nextDate.setDate(nextDate.getDate() + 1);
+          const nextDateStr = `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}-${nextDate.getDate().toString().padStart(2, "0")}`;
+          if (!assign[m.staff_name][nextDateStr]) {
+            assign[m.staff_name][nextDateStr] = akePatternKey;
+          }
+          usedStaffByDay[dateStr].add(m.staff_name);
+        }
+
+        // --- 介護士(1名)
+        const candidatesCare = _members.filter(m => {
+          const jt = getJobTitleString(m.job_title);
+          // 職種判定: 介護士/助手
+          if (!(jt.includes("介護") || jt.includes("助手"))) return false;
+          if (!(Array.isArray(m.work_patterns) && nightPatternId && m.work_patterns.includes(nightPatternId))) return false;
+          // 前日夜勤でない
+          if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
+          // 既にこの日夜勤していない
+          if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
+          return true;
+        });
+        // 乱択1名
+        let pickCare: typeof candidatesCare = [];
+        if (candidatesCare.length > 1) {
+          const shuffle = candidatesCare.slice().sort(() => Math.random() - 0.5);
+          pickCare = shuffle.slice(0, 1);
+        } else {
+          pickCare = candidatesCare;
+        }
+        for (const m of pickCare) {
+          assign[m.staff_name][dateStr] = nightPatternKey;
+          // 明け(翌日)も
+          const nextDate = new Date(year, month - 1, day);
+          nextDate.setDate(nextDate.getDate() + 1);
+          const nextDateStr = `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}-${nextDate.getDate().toString().padStart(2, "0")}`;
+          if (!assign[m.staff_name][nextDateStr]) {
+            assign[m.staff_name][nextDateStr] = akePatternKey;
+          }
+          usedStaffByDay[dateStr].add(m.staff_name);
+        }
+      }
+
+      // ==== ステップ2: 公休配置（常勤のみ） ====
+      for (const m of _members) {
+        if (m.employment_status !== "常勤") continue;
+        // 休ノルマ
+        const quota = getHolidayQuota(year, month);
+        // 夜勤明け以外の日一覧
+        // dayごとに、夜勤明け以外（night/ake含まない日）を抽出
+        const availableDays: string[] = [];
+        dayList.forEach(d => {
+          const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
+          const shiftType = assign[m.staff_name]?.[dateStr];
+          if (shiftType == nightPatternKey || shiftType == akePatternKey) return;
+          availableDays.push(dateStr);
+        });
+        // 乱数シャッフルしてquotaぶん配置
+        let restAssignDays = availableDays.sort(() => Math.random() - 0.5).slice(0, quota);
+        for (const dateStr of restAssignDays) {
+          assign[m.staff_name][dateStr] = restPatternKey;
+        }
+      }
+
+      // ==== 最後にshifts登録用オブジェクトへ変換し一括登録 ====
+      const upsertRows: ShiftRecordV2[] = [];
+      for (const staff_name in assign) {
+        for (const date in assign[staff_name]) {
+          const shift_type = assign[staff_name][date];
+          if (!shift_type) continue;
+          upsertRows.push({
+            staff_name,
+            date,
+            is_actual: false,
+            shift_type,
+            updated_by: staffProfile?.staff_name ?? null,
+          });
+        }
+      }
+      if (upsertRows.length > 0) {
+        // 50件ずつ分割アップサート
+        for (let i = 0; i < upsertRows.length; i += 50) {
+          const chunk = upsertRows.slice(i, i + 50);
+          await supabase.from("shifts").upsert(chunk, { onConflict: 'staff_name,date,is_actual' });
+        }
+      }
+
+      // ステート更新もする
+      setShiftRecords(prev => {
+        // "plan"だけ上書き
+        const newRecords = upsertRows.map(r => ({ ...r }));
+        // 前stateは実績or今月外を温存
+        const keep = prev.filter(x => x.is_actual || x.date.slice(0, 7) !== `${yearStr}-${monthStr}`);
+        return [...keep, ...newRecords];
+      });
+
+    } catch (e) {
+      alert("自動作成に失敗しました: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setIsGeneratingShifts(false);
+    }
+  }, [members, allPatterns, year, month, staffProfile?.staff_name, nightPatternId, nightPatternKey, akePatternId, akePatternKey, restPatternKey]);
+
   const loggedInName = staffProfile?.staff_name;
 
   const loggedInJob = useMemo(() => {
@@ -728,13 +955,7 @@ export default function Home() {
 
   // ======== 公休ノルマ関連ロジック ========
   // employment_statusが"常勤"なら、(8月・12月・1月 = 10日, その他 = 9日)のノルマ
-  const getHolidayQuota = (theYear: number, theMonth: number) => {
-    // 8月(8), 12月(12), 1月(1) => 10, 他は9
-    if (theMonth === 8 || theMonth === 12 || theMonth === 1) {
-      return 10;
-    }
-    return 9;
-  };
+  // getHolidayQuotaは関数（上で定義済み）
 
   // シフト値が「休」と一致するものだけカウント
   const countRestDays = (profile: StaffMasterProfile) => {
@@ -819,6 +1040,29 @@ export default function Home() {
                   aria-label="次の月へ"
                 >▶</button>
               </div>
+              {/* ---------- 追加: 自動作成ボタン ---------- */}
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="ml-3 px-4 py-1.5 rounded-lg font-bold text-xs bg-green-600 text-white hover:bg-green-700 shadow transition disabled:opacity-50"
+                  disabled={isGeneratingShifts}
+                  onClick={async () => {
+                    if (isGeneratingShifts) return;
+                    if (!window.confirm("現在のシフトが上書きされますがよろしいですか？")) return;
+                    await generateShiftPhase1();
+                  }}
+                >
+                  {isGeneratingShifts ? (
+                    <span className="flex items-center gap-1">
+                      <svg className="inline-block animate-spin text-white" width="17" height="17" viewBox="0 0 50 50"><circle className="opacity-25" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="5"></circle><circle className="opacity-75" cx="25" cy="25" r="20" fill="none" stroke="#fff" strokeWidth="5" strokeDasharray="31.4 100"></circle></svg>
+                      作成中...
+                    </span>
+                  ) : (
+                    <span>自動作成（夜勤・公休）</span>
+                  )}
+                </button>
+              )}
+              {/* ---------- END: 自動作成ボタン ---------- */}
             </div>
             {/* 右側：ユーザー情報や「予定」「実績」切替など */}
             <div className="flex gap-2 items-center">
@@ -856,6 +1100,15 @@ export default function Home() {
       </div>
       <div className="flex-1 overflow-hidden px-2 md:px-6 pb-4">
         <div className="h-full w-full overflow-auto border rounded-xl shadow-2xl bg-white relative border-separate">
+          {/* ローディング表示 */}
+          {isGeneratingShifts && (
+            <div className="absolute inset-0 z-[120] bg-white/80 flex items-center justify-center">
+              <div className="flex flex-col items-center gap-2">
+                <svg className="animate-spin text-green-700" width="36" height="36" viewBox="0 0 50 50"><circle className="opacity-25" cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="5"></circle><circle className="opacity-75" cx="25" cy="25" r="20" fill="none" stroke="#22c55e" strokeWidth="5" strokeDasharray="31.4 100"></circle></svg>
+                <span className="text-green-700 font-bold">自動作成中...</span>
+              </div>
+            </div>
+          )}
           <table className="border-separate border-spacing-0 min-w-full">
             <thead className="sticky top-0 z-[100]">
               <tr className="text-white text-[10px] text-center font-bold">
