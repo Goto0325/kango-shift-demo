@@ -196,6 +196,8 @@ export class ShiftEngine {
     // ステップ2: 公休配置 空セルのみ
     for (const m of _members) {
       if (m.employment_status !== "常勤") continue;
+      // システム管理者は「平日日勤・土日休み」固定のため、公休のランダム配置対象外
+      if (isAdminStaff(m)) continue;
       const quota = StaffManager.getHolidayQuota(year, month);
 
       // 既に割り当て済み（事前入力＋夜勤/明け等）の公休数をカウントし、不足分だけ追加する
