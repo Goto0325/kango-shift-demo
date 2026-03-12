@@ -1,122 +1,13 @@
 "use client";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-type StaffMasterProfile = {
-  id: string;
-  staff_name: string;
-  access_token: string;
-  job_title: string | object | null;
-  department_id: number | string | null;
-  work_patterns: number[] | null;
-  paid_leave_remaining: number | null;
-  employment_status?: string; // 追加: 雇用区分 (例：「常勤」/「非常勤」など)
-};
-
-type ShiftRecordV2 = {
-  id?: number;
-  staff_name: string;
-  date: string;
-  is_actual: boolean;
-  shift_type: string | null;
-  updated_by?: string | null;
-};
-
-type ShiftPattern = {
-  id: number;
-  pattern_name: string;
-  pattern_key: string;
-  work_hours: number;
-};
+import { StaffManager, type StaffMasterProfile, type ShiftPattern } from '@/lib/StaffManager';
+import { ShiftRepository, type ShiftRecordV2 } from '../lib/ShiftRepository';
+import { ShiftEngine } from '@/lib/ShiftEngine';
+import { supabase } from '../../lib/supabase';
 
 const MONTH_NAMES = [
   "", "1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"
 ];
-
-// ==== 職種取得・職種分類 ====
-function getJobTitleString(jobTitle: StaffMasterProfile["job_title"]) {
-  if (!jobTitle) return "";
-  if (typeof jobTitle === "string") {
-    try {
-      const parsed = JSON.parse(jobTitle);
-      if (parsed && typeof parsed === "object" && (parsed.name || parsed.label)) {
-        return parsed.name || parsed.label || "";
-      }
-    } catch {}
-    return jobTitle;
-  } else if (typeof jobTitle === "object" && jobTitle !== null) {
-    if ((jobTitle as any).name) return (jobTitle as any).name;
-    if ((jobTitle as any).label) return (jobTitle as any).label;
-    return JSON.stringify(jobTitle);
-  }
-  return "";
-}
-
-function isRestishValue(value: string): boolean {
-  if (!value) return false;
-  return value.includes("休") || value.includes("有");
-}
-
-function isRestPattern(pattern: ShiftPattern | undefined): boolean {
-  if (!pattern) return false;
-  const restKeywords = ["休", "有給", "休日", "有休", "代休"];
-  return restKeywords.some(
-    k => (pattern.pattern_name && pattern.pattern_name.includes(k)) ||
-         (pattern.pattern_key && pattern.pattern_key.includes(k))
-  );
-}
-
-function isAdminUser(jobTitle: StaffMasterProfile["job_title"]) {
-  if (!jobTitle) {
-    console.log("[ADMIN判定] jobTitle undefined/null:", jobTitle);
-    return false;
-  }
-  let targetStr = "";
-  if (typeof jobTitle === "object" && jobTitle !== null) {
-    if ((jobTitle as any).name) targetStr = (jobTitle as any).name;
-    if (!targetStr && (jobTitle as any).label) targetStr = (jobTitle as any).label;
-  } else if (typeof jobTitle === "string") {
-    try {
-      const parsed = JSON.parse(jobTitle);
-      if (parsed && typeof parsed === "object") {
-        if (parsed.name) targetStr = parsed.name;
-        else if (parsed.label) targetStr = parsed.label;
-      }
-      if (!targetStr) targetStr = jobTitle;
-    } catch {
-      targetStr = jobTitle;
-    }
-  }
-  console.log("[ADMIN判定] jobTitle解釈:", jobTitle, "→", targetStr);
-  return typeof targetStr === "string" && targetStr.includes("システム管理者");
-}
-
-// 職種（job_title）を分類
-function jobTitleCategory(jobTitle: StaffMasterProfile["job_title"]): number {
-  // 0: システム管理者, 1: 看護師, 2: 介護士など, 9: その他
-  const title = getJobTitleString(jobTitle);
-  if (title.includes("システム管理者")) return 0;
-  if (title.includes("看護師")) return 1;
-  if (title.includes("介護") || title.includes("助手")) return 2;
-  return 9;
-}
-function jobTitleKey(jobTitle: StaffMasterProfile["job_title"]): string {
-  // 並べ替え時に同値ソートで使う(なるべく五十音順)
-  const t = getJobTitleString(jobTitle);
-  return t || "";
-}
-
-function getHolidayQuota(theYear: number, theMonth: number): number {
-  // 8月(8), 12月(12), 1月(1) => 10, 他は9
-  if (theMonth === 8 || theMonth === 12 || theMonth === 1) {
-    return 10;
-  }
-  return 9;
-}
 
 export default function Home() {
   const [year, setYear] = useState(2026);
@@ -165,24 +56,11 @@ export default function Home() {
   const [isGeneratingShifts, setIsGeneratingShifts] = useState(false);
 
   useEffect(() => {
-    const fetchShiftPatterns = async () => {
-      const { data, error } = await supabase
-        .from("shift_patterns")
-        .select("*")
-        .order("id", { ascending: true });
-
-      if (!error && Array.isArray(data)) {
-        setAllPatterns(
-          (data as any[]).map((row: any) => ({
-            id: row.id,
-            pattern_name: row.pattern_name,
-            pattern_key: row.pattern_key,
-            work_hours: row.work_hours,
-          }))
-        );
-      }
+    const load = async () => {
+      const rows = await ShiftRepository.fetchShiftPatterns();
+      setAllPatterns(rows);
     };
-    fetchShiftPatterns();
+    load();
   }, []);
 
   useEffect(() => {
@@ -276,7 +154,7 @@ export default function Home() {
   const [shiftRecords, setShiftRecords] = useState<ShiftRecordV2[]>([]);
   const [viewMode, setViewMode] = useState<'plan' | 'actual'>("plan");
   useEffect(() => {
-    const fetchShifts = async () => {
+    const load = async () => {
       const validDep =
         departmentId !== null &&
         departmentId !== undefined &&
@@ -288,10 +166,6 @@ export default function Home() {
         setShiftRecords([]);
         return;
       }
-      const d1 = new Date(year, month - 1, 1);
-      const d2 = new Date(year, month, 0);
-      const startDate = d1.toISOString().slice(0, 10);
-      const endDate = d2.toISOString().slice(0, 10);
       let staffNames = members.map((s) => s.staff_name);
       if (staffNames.length === 0 && staffProfile?.staff_name) {
         staffNames = [staffProfile.staff_name];
@@ -300,29 +174,15 @@ export default function Home() {
         setShiftRecords([]);
         return;
       }
-      const { data, error } = await supabase
-        .from("shifts")
-        .select("*")
-        .in("staff_name", staffNames)
-        .gte("date", startDate)
-        .lte("date", endDate)
-        .eq("is_actual", viewMode === "actual");
-      if (!error && Array.isArray(data)) {
-        setShiftRecords(
-          data.map((rec: any) => ({
-            id: rec.id,
-            staff_name: rec.staff_name,
-            date: rec.date,
-            is_actual: !!rec.is_actual,
-            shift_type: rec.shift_type,
-            updated_by: rec.updated_by ?? null,
-          }))
-        );
-      } else {
-        setShiftRecords([]);
-      }
+      const data = await ShiftRepository.fetchShifts({
+        year,
+        month,
+        staffNames,
+        isActual: viewMode === "actual",
+      });
+      setShiftRecords(data);
     };
-    fetchShifts();
+    load();
   }, [departmentId, viewMode, year, month, members, staffProfile?.staff_name]);
 
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -358,7 +218,7 @@ export default function Home() {
   const canEdit = useCallback(
     (targetStaffId: string): boolean => {
       if (!staffProfile) return false;
-      const jobTitleString = getJobTitleString(staffProfile.job_title);
+      const jobTitleString = StaffManager.getJobTitleString(staffProfile.job_title);
       if (typeof jobTitleString === "string" && jobTitleString.includes("システム管理者")) {
         return true;
       }
@@ -368,7 +228,7 @@ export default function Home() {
   );
 
   const isAdmin = useMemo(() => {
-    return isAdminUser(staffProfile?.job_title ?? "");
+    return StaffManager.isAdminUser(staffProfile?.job_title ?? "");
   }, [staffProfile?.job_title]);
 
   const handleCellEdit = useCallback((staff_name: string, date: string) => {
@@ -494,22 +354,15 @@ export default function Home() {
       });
 
       try {
-        const { data, error } = await supabase
-          .from("shifts")
-          .upsert(upsertRows, { onConflict: 'staff_name,date,is_actual' })
-          .select();
+        const data = await ShiftRepository.upsertShiftsAndSelect(upsertRows);
 
-        if (error) {
-          console.error("Shift upsert error:", error);
-          alert('保存に失敗しました: ' + error.message);
-        } else if (data && Array.isArray(data)) {
+        if (data && data.length > 0) {
           setShiftRecords((prev) => {
-            // 本日・翌日分をmerge
-            const keyMatch = (r: ShiftRecordV2, n: any) =>
+            const keyMatch = (r: ShiftRecordV2, n: ShiftRecordV2) =>
               r.staff_name === n.staff_name && r.date === n.date && r.is_actual === !!n.is_actual;
             let replaced = [...prev];
-            data.forEach((newRec: any) => {
-              const ix = replaced.findIndex(r => keyMatch(r, newRec));
+            data.forEach((newRec: ShiftRecordV2) => {
+              const ix = replaced.findIndex((r) => keyMatch(r, newRec));
               const cleaned = {
                 id: newRec.id,
                 staff_name: newRec.staff_name,
@@ -527,6 +380,9 @@ export default function Home() {
             return replaced;
           });
         }
+      } catch (err) {
+        console.error("Shift upsert error:", err);
+        alert("保存に失敗しました: " + (err instanceof Error ? err.message : String(err)));
       } finally {
         setIsSaving(false);
       }
@@ -569,214 +425,69 @@ export default function Home() {
 
   // --- 自動生成コア ---
   const generateShiftPhase1 = useCallback(async () => {
-    // 処理中制御
     setIsGeneratingShifts(true);
     try {
-      // メンバーlist
-      const _members = [...members];
-      const _patterns = [...allPatterns];
-      if (!_members.length) {
-        alert('メンバーが存在しません');
-        setIsGeneratingShifts(false);
+      if (!members.length) {
+        alert("メンバーが存在しません");
         return;
       }
+      const staffNames = members.map((s) => s.staff_name);
+      const existedShifts = await ShiftRepository.fetchShiftsForMonth({
+        year,
+        month,
+        staffNames,
+      });
+
+      const result = ShiftEngine.generateShiftPhase1({
+        members,
+        year,
+        month,
+        existedShifts,
+        nightPatternId,
+        nightPatternKey,
+        akePatternKey,
+        restPatternKey,
+        updatedBy: staffProfile?.staff_name ?? null,
+      });
+
+      if (!result) return;
+
+      const { upsertRows, existedShifts: existed, readonlyShiftMap } = result;
       const yearStr = year;
-      const monthStr = month.toString().padStart(2, '0');
-      const daysCount = new Date(year, month, 0).getDate();
-      const dayList = Array.from({ length: daysCount }, (_, i) => i + 1);
+      const monthStr = month.toString().padStart(2, "0");
 
-      // 既存のshift（"plan"のみ取得、今月のみ）
-      const d1 = `${yearStr}-${monthStr}-01`;
-      const d2 = `${yearStr}-${monthStr}-${daysCount.toString().padStart(2, '0')}`;
-      let existedShifts: ShiftRecordV2[] = [];
-      {
-        const { data, error } = await supabase
-          .from("shifts")
-          .select("*")
-          .in("staff_name", _members.map(s => s.staff_name))
-          .eq("is_actual", false)
-          .gte("date", d1)
-          .lte("date", d2);
-
-        if (data && Array.isArray(data)) {
-          existedShifts = data.map((rec: any) => ({
-            id: rec.id,
-            staff_name: rec.staff_name,
-            date: rec.date,
-            is_actual: !!rec.is_actual,
-            shift_type: rec.shift_type,
-            updated_by: rec.updated_by ?? null,
-          }));
-        }
-      }
-
-      // 事前入力のセルは残す: staff_name, dateでマッピング
-      const readonlyShiftMap: { [staffName: string]: { [date: string]: string | null } } = {};
-      existedShifts.forEach(({ staff_name, date, shift_type }) => {
-        if (!readonlyShiftMap[staff_name]) readonlyShiftMap[staff_name] = {};
-        readonlyShiftMap[staff_name][date] = shift_type;
-      });
-
-      // シフト割当配列（既存入力優先）
-      const assign: { [staffName: string]: { [date: string]: string } } = {};
-      _members.forEach(m => {
-        assign[m.staff_name] = {};
-        for (let d = 1; d <= daysCount; ++d) {
-          const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
-          // 既存入力ありならそれをセット
-          if (readonlyShiftMap[m.staff_name]?.[dateStr]) {
-            assign[m.staff_name][dateStr] = readonlyShiftMap[m.staff_name][dateStr]!;
-          }
-        }
-      });
-
-      // ステップ1: 夜勤配置（空セルのみ割当）
-      for (const day of dayList) {
-        const dateStr = `${yearStr}-${monthStr}-${day.toString().padStart(2, "0")}`;
-        // 前日
-        const prevDate = new Date(year, month - 1, day);
-        prevDate.setDate(prevDate.getDate() - 1);
-        const prevDateStr = `${prevDate.getFullYear()}-${(prevDate.getMonth() + 1).toString().padStart(2, "0")}-${prevDate.getDate().toString().padStart(2, "0")}`;
-
-        // --- 看護師(2名)割当 空セルのみ
-        const candidatesNurse = _members.filter(m => {
-          const jt = getJobTitleString(m.job_title);
-          if (!jt.includes("看護師")) return false;
-          if (!(Array.isArray(m.work_patterns) && nightPatternId && m.work_patterns.includes(nightPatternId))) return false;
-          // 前日夜勤でない
-          if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
-          // 既にこの日夜勤していない
-          if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
-          // 既に入力ありならスキップ
-          if (assign[m.staff_name]?.[dateStr]) return false;
-          return true;
-        });
-
-        let pickNurse: typeof candidatesNurse = [];
-        if (candidatesNurse.length > 2) {
-          const shuffle = candidatesNurse.slice().sort(() => Math.random() - 0.5);
-          pickNurse = shuffle.slice(0, 2);
-        } else {
-          pickNurse = candidatesNurse;
-        }
-        for (const m of pickNurse) {
-          assign[m.staff_name][dateStr] = nightPatternKey;
-          // 明けも空なら自動付与
-          const nextDate = new Date(year, month - 1, day);
-          nextDate.setDate(nextDate.getDate() + 1);
-          const nextDateStr = `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}-${nextDate.getDate().toString().padStart(2, "0")}`;
-          if (!assign[m.staff_name][nextDateStr]) {
-            assign[m.staff_name][nextDateStr] = akePatternKey;
-          }
-        }
-
-        // --- 介護士(1名)割当 空セルのみ
-        const candidatesCare = _members.filter(m => {
-          const jt = getJobTitleString(m.job_title);
-          if (!(jt.includes("介護") || jt.includes("助手"))) return false;
-          if (!(Array.isArray(m.work_patterns) && nightPatternId && m.work_patterns.includes(nightPatternId))) return false;
-          if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
-          if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
-          if (assign[m.staff_name]?.[dateStr]) return false;
-          return true;
-        });
-
-        let pickCare: typeof candidatesCare = [];
-        if (candidatesCare.length > 1) {
-          const shuffle = candidatesCare.slice().sort(() => Math.random() - 0.5);
-          pickCare = shuffle.slice(0, 1);
-        } else {
-          pickCare = candidatesCare;
-        }
-        for (const m of pickCare) {
-          assign[m.staff_name][dateStr] = nightPatternKey;
-          // 明けも空なら自動付与
-          const nextDate = new Date(year, month - 1, day);
-          nextDate.setDate(nextDate.getDate() + 1);
-          const nextDateStr = `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}-${nextDate.getDate().toString().padStart(2, "0")}`;
-          if (!assign[m.staff_name][nextDateStr]) {
-            assign[m.staff_name][nextDateStr] = akePatternKey;
-          }
-        }
-      }
-
-      // ステップ2: 公休配置 空セルのみ
-      for (const m of _members) {
-        if (m.employment_status !== "常勤") continue;
-        const quota = getHolidayQuota(year, month);
-
-        // 夜勤明けを除く未入力の日だけ
-        const availableDays: string[] = [];
-        dayList.forEach(d => {
-          const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
-          const shiftType = assign[m.staff_name]?.[dateStr];
-          // 既に割当・入力済・夜勤や明けの場合、対象外
-          if (shiftType == nightPatternKey || shiftType == akePatternKey || shiftType) return;
-          availableDays.push(dateStr);
-        });
-
-        let restAssignDays = availableDays.sort(() => Math.random() - 0.5).slice(0, quota);
-        for (const dateStr of restAssignDays) {
-          assign[m.staff_name][dateStr] = restPatternKey;
-        }
-      }
-
-      // 最後にshifts登録用オブジェクトへ（空セルはスキップ、既存入力以外のみ保存する）
-      const upsertRows: ShiftRecordV2[] = [];
-      for (const staff_name in assign) {
-        for (const date in assign[staff_name]) {
-          const shift_type = assign[staff_name][date];
-          // 既存入力と同じなら保存不要
-          if (readonlyShiftMap[staff_name]?.[date] === shift_type) continue;
-          if (!shift_type) continue;
-          upsertRows.push({
-            staff_name,
-            date,
-            is_actual: false,
-            shift_type,
-            updated_by: staffProfile?.staff_name ?? null,
-          });
-        }
-      }
-      // データベース保存
       if (upsertRows.length > 0) {
-        for (let i = 0; i < upsertRows.length; i += 50) {
-          const chunk = upsertRows.slice(i, i + 50);
-          await supabase.from("shifts").upsert(chunk, { onConflict: 'staff_name,date,is_actual' });
-        }
+        await ShiftRepository.upsertShifts(upsertRows);
       }
 
-      // ステートを更新
-      setShiftRecords(prev => {
-        // 既存planデータは上書き、actualや今月以外は保持
+      setShiftRecords((prev) => {
         const planMap: { [key: string]: ShiftRecordV2 } = {};
         for (const s of upsertRows) {
           planMap[`${s.staff_name}_${s.date}`] = s;
         }
         return prev
-          .filter(x => x.is_actual || x.date.slice(0, 7) !== `${yearStr}-${monthStr}`)
+          .filter((x) => x.is_actual || x.date.slice(0, 7) !== `${yearStr}-${monthStr}`)
           .concat(
-            // 既存入力だったplanセル（実績false, 今月で、readonlyShiftMapに該当するもの）
-            existedShifts.filter(x =>
-              !x.is_actual &&
-              x.date.slice(0, 7) === `${yearStr}-${monthStr}` &&
-              readonlyShiftMap[x.staff_name]?.[x.date]
+            existed.filter(
+              (x) =>
+                !x.is_actual &&
+                x.date.slice(0, 7) === `${yearStr}-${monthStr}` &&
+                readonlyShiftMap[x.staff_name]?.[x.date]
             ),
-            upsertRows.map(r => ({ ...r }))
+            upsertRows.map((r) => ({ ...r }))
           );
       });
-
     } catch (e) {
       alert("自動作成に失敗しました: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setIsGeneratingShifts(false);
     }
-  }, [members, allPatterns, year, month, staffProfile?.staff_name, nightPatternId, nightPatternKey, akePatternId, akePatternKey, restPatternKey]);
+  }, [members, year, month, staffProfile?.staff_name, nightPatternId, nightPatternKey, akePatternKey, restPatternKey]);
 
   const loggedInName = staffProfile?.staff_name;
 
   const loggedInJob = useMemo(() => {
-    return getJobTitleString(staffProfile?.job_title ?? null);
+    return StaffManager.getJobTitleString(staffProfile?.job_title ?? null);
   }, [staffProfile?.job_title]);
 
   const loggedInPatterns = useMemo(() => {
@@ -975,11 +686,8 @@ export default function Home() {
     [isSaving, handleSave, allPatterns, handleCellEdit, canEdit, isAdmin, viewMode, staffProfile?.job_title, staffProfile?.staff_name, shiftMap]
   );
 
-  // ======== 公休ノルマ関連ロジック ========
-  // employment_statusが"常勤"なら、(8月・12月・1月 = 10日, その他 = 9日)のノルマ
-  // getHolidayQuotaは関数（上で定義済み）
-
   // シフト値が「休」と一致するものだけカウント
+  // employment_statusが"常勤"なら、(8月・12月・1月 = 10日, その他 = 9日)のノルマ
   const countRestDays = (profile: StaffMasterProfile) => {
     // この月の日付リスト
     let count = 0;
@@ -1002,14 +710,14 @@ export default function Home() {
     // 2. 並び替え
     arr = arr.sort((a, b) => {
       // 0:システム管理者 1:看護師 2:介護士/助手 9:その他
-      const catA = jobTitleCategory(a.job_title);
-      const catB = jobTitleCategory(b.job_title);
+      const catA = StaffManager.jobTitleCategory(a.job_title);
+      const catB = StaffManager.jobTitleCategory(b.job_title);
       if (catA !== catB) return catA - catB;
       // 同じ職種カテゴリ内で staff_name 五十音順
       const keyA = (a.staff_name || "").localeCompare(b.staff_name || "", "ja");
       if (keyA !== 0) return keyA;
       // 更に表示名で微ソート（不要だが保険）
-      return (jobTitleKey(a.job_title) || "").localeCompare(jobTitleKey(b.job_title) || "", "ja");
+      return (StaffManager.jobTitleKey(a.job_title) || "").localeCompare(StaffManager.jobTitleKey(b.job_title) || "", "ja");
     });
 
     // 管理者の場合は自分の行を先頭にする
@@ -1191,7 +899,7 @@ export default function Home() {
                 // サーバー上でデータが存在しない既存データの場合、employment_status未定義も考慮するので、"常勤"として判定したい場合等は対応
                 if (typeof empStatus !== "string") empStatus = undefined;
 
-                const quota = empStatus === "常勤" ? getHolidayQuota(year, month) : undefined;
+                const quota = empStatus === "常勤" ? StaffManager.getHolidayQuota(year, month) : undefined;
 
                 // 色判定
                 let quotaColor = "";
@@ -1207,8 +915,8 @@ export default function Home() {
 
                 // 職種間のボーダー判定: この行と次の行で職種カテゴリが違えば強い枠線
                 let borderClass = "";
-                const thisCategory = jobTitleCategory(profile.job_title);
-                const nextCategory = arr[idx + 1] ? jobTitleCategory(arr[idx + 1].job_title) : null;
+                const thisCategory = StaffManager.jobTitleCategory(profile.job_title);
+                const nextCategory = arr[idx + 1] ? StaffManager.jobTitleCategory(arr[idx + 1].job_title) : null;
                 if (nextCategory !== null && nextCategory !== undefined && thisCategory !== nextCategory) {
                   borderClass = " border-b-4 border-gray-400";
                 }
