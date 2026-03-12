@@ -700,6 +700,32 @@ export default function Home() {
     return count;
   };
 
+  const countNightDays = (profile: StaffMasterProfile) => {
+    let count = 0;
+    for (let d = 1; d <= daysInMonth; ++d) {
+      const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+      const shiftVal = shiftMap?.[profile.staff_name]?.[dayStr]?.value;
+      if (shiftVal === nightPatternKey) count++;
+    }
+    return count;
+  };
+
+  const countWeekendWorkDays = (profile: StaffMasterProfile) => {
+    let count = 0;
+    for (let d = 1; d <= daysInMonth; ++d) {
+      const date = new Date(year, month - 1, d);
+      const dow = date.getDay(); // 0=日,6=土
+      if (dow !== 0 && dow !== 6) continue;
+      const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+      const shiftVal = shiftMap?.[profile.staff_name]?.[dayStr]?.value;
+      if (!shiftVal) continue;
+      // 休み系は「出勤」に含めない（例: 休/有休）
+      if (StaffManager.isRestishValue(shiftVal)) continue;
+      count++;
+    }
+    return count;
+  };
+
   // ======== 並び替え付き・職種間区切り付き members を計算 ========
   const sortedMembers = useMemo(() => {
     if (!members || members.length === 0) return [];
@@ -846,6 +872,8 @@ export default function Home() {
                   職員名 / 職種
                 </th>
                 <th className="bg-slate-900 border-b border-r border-slate-700 min-w-[50px] text-blue-200">公休</th>
+                <th className="bg-slate-900 border-b border-r border-slate-700 min-w-[50px] text-blue-200">夜勤</th>
+                <th className="bg-slate-900 border-b border-r border-slate-700 min-w-[50px] text-blue-200">土日</th>
                 {days.map(d => {
                   const info = getDayInfo(d);
                   return (
@@ -893,6 +921,8 @@ export default function Home() {
 
                 // ==== 公休数/ノルマ判定 ====
                 const restCount = countRestDays(profile);
+                const nightCount = countNightDays(profile);
+                const weekendWorkCount = countWeekendWorkDays(profile);
 
                 // employment_statusプロパティ取り出し
                 let empStatus = profile.employment_status;
@@ -958,6 +988,12 @@ export default function Home() {
                         )
                       }
                     </td>
+                    <td className={`border-b border-r border-slate-200 text-center text-[12px] bg-slate-50 select-none ${borderClass}`} style={{ minWidth: 46, fontWeight: 'bold' }}>
+                      {nightCount}
+                    </td>
+                    <td className={`border-b border-r border-slate-200 text-center text-[12px] bg-slate-50 select-none ${borderClass}`} style={{ minWidth: 46, fontWeight: 'bold' }}>
+                      {weekendWorkCount}
+                    </td>
                     {days.map(d => {
                       const info = getDayInfo(d);
                       const dayStr = `${year}-${month.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
@@ -990,7 +1026,9 @@ export default function Home() {
                 <td className="sticky left-0 z-[110] !bg-slate-900 p-2 border-r border-slate-700 text-center text-xs uppercase tracking-tighter min-w-[140px]">
                   合計
                 </td>
-                {/* 公休 合計列は空/非表示 */}
+                {/* 公休/夜勤/土日 合計列は空（ここでは集計表示しない） */}
+                <td className="!bg-slate-900 border-r border-slate-700"></td>
+                <td className="!bg-slate-900 border-r border-slate-700"></td>
                 <td className="!bg-slate-900 border-r border-slate-700"></td>
                 {days.map(d => (
                   <td key={d} className="p-1 text-center border-r border-slate-700 !bg-slate-900 min-w-[45px]">
