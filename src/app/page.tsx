@@ -10,9 +10,10 @@ const MONTH_NAMES = [
 ];
 
 export default function Home() {
-  const [year, setYear] = useState(2026);
-  const [month, setMonth] = useState(2);
-
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  
   const handlePrevMonth = useCallback(() => {
     setMonth(prevMonth => {
       if (prevMonth === 1) {
