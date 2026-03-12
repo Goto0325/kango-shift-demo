@@ -59,6 +59,24 @@ export class ShiftEngine {
     const daysCount = new Date(year, month, 0).getDate();
     const dayList = Array.from({ length: daysCount }, (_, i) => i + 1);
 
+    const isWeekendDay = (d: number) => {
+      const dow = new Date(year, month - 1, d).getDay(); // 0=日,6=土
+      return dow === 0 || dow === 6;
+    };
+
+    const isAdminStaff = (m: StaffMasterProfile) =>
+      StaffManager.getJobTitleString(m.job_title).includes("システム管理者");
+
+    const shuffle = <T,>(arr: T[]): T[] => arr.slice().sort(() => Math.random() - 0.5);
+
+    const pickLeast = <T,>(params: { candidates: T[]; count: number; score: (t: T) => number }): T[] => {
+      const { candidates, count, score } = params;
+      if (candidates.length <= count) return candidates;
+      const scored = candidates.map((c) => ({ c, s: score(c), r: Math.random() }));
+      scored.sort((a, b) => (a.s !== b.s ? a.s - b.s : a.r - b.r));
+      return scored.slice(0, count).map((x) => x.c);
+    };
+
     // 事前入力のセルは残す: staff_name, date でマッピング
     const readonlyShiftMap: { [staffName: string]: { [date: string]: string | null } } = {};
     existedShifts.forEach(({ staff_name, date, shift_type }) => {
@@ -78,6 +96,29 @@ export class ShiftEngine {
       }
     });
 
+    // なるべく均一化のためのカウント（既存入力分も含めて初期化）
+    const nightCount: Record<string, number> = {};
+    const weekendWorkCount: Record<string, number> = {};
+    _members.forEach((m) => {
+      nightCount[m.staff_name] = 0;
+      weekendWorkCount[m.staff_name] = 0;
+    });
+    for (const m of _members) {
+      for (const d of dayList) {
+        const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
+        const v = assign[m.staff_name]?.[dateStr];
+        if (!v) continue;
+        if (v === nightPatternKey) nightCount[m.staff_name] += 1;
+        if (isWeekendDay(d) && !StaffManager.isRestishValue(v)) weekendWorkCount[m.staff_name] += 1;
+      }
+    }
+
+    const applyAssign = (m: StaffMasterProfile, dateStr: string, dayNum: number, v: string) => {
+      assign[m.staff_name][dateStr] = v;
+      if (v === nightPatternKey) nightCount[m.staff_name] += 1;
+      if (isWeekendDay(dayNum) && !StaffManager.isRestishValue(v)) weekendWorkCount[m.staff_name] += 1;
+    };
+
     // ステップ1: 夜勤配置（空セルのみ割当）
     for (const day of dayList) {
       const dateStr = `${yearStr}-${monthStr}-${day.toString().padStart(2, "0")}`;
@@ -93,23 +134,29 @@ export class ShiftEngine {
         if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr]) return false;
+        // システム管理者は週末勤務なし（夜勤も週末には割り当てない）
+        if (isWeekendDay(day) && isAdminStaff(m)) return false;
         return true;
       });
 
-      let pickNurse: typeof candidatesNurse;
-      if (candidatesNurse.length > 2) {
-        const shuffle = candidatesNurse.slice().sort(() => Math.random() - 0.5);
-        pickNurse = shuffle.slice(0, 2);
-      } else {
-        pickNurse = candidatesNurse;
-      }
+      const pickNurse = pickLeast({
+        candidates: candidatesNurse,
+        count: 2,
+        score: (m) => nightCount[m.staff_name] ?? 0,
+      });
       for (const m of pickNurse) {
-        assign[m.staff_name][dateStr] = nightPatternKey;
+        applyAssign(m, dateStr, day, nightPatternKey);
         const nextDate = new Date(year, month - 1, day);
         nextDate.setDate(nextDate.getDate() + 1);
         const nextDateStr = `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}-${nextDate.getDate().toString().padStart(2, "0")}`;
         if (!assign[m.staff_name][nextDateStr]) {
-          assign[m.staff_name][nextDateStr] = akePatternKey;
+          // 明け（翌日が表示月外の場合はそのままキーで保存されうるが、既存挙動維持）
+          const nextDayNum = day + 1;
+          if (nextDayNum >= 1 && nextDayNum <= daysCount) {
+            applyAssign(m, nextDateStr, nextDayNum, akePatternKey);
+          } else {
+            assign[m.staff_name][nextDateStr] = akePatternKey;
+          }
         }
       }
 
@@ -121,23 +168,27 @@ export class ShiftEngine {
         if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr]) return false;
+        if (isWeekendDay(day) && isAdminStaff(m)) return false;
         return true;
       });
 
-      let pickCare: typeof candidatesCare;
-      if (candidatesCare.length > 1) {
-        const shuffle = candidatesCare.slice().sort(() => Math.random() - 0.5);
-        pickCare = shuffle.slice(0, 1);
-      } else {
-        pickCare = candidatesCare;
-      }
+      const pickCare = pickLeast({
+        candidates: candidatesCare,
+        count: 1,
+        score: (m) => nightCount[m.staff_name] ?? 0,
+      });
       for (const m of pickCare) {
-        assign[m.staff_name][dateStr] = nightPatternKey;
+        applyAssign(m, dateStr, day, nightPatternKey);
         const nextDate = new Date(year, month - 1, day);
         nextDate.setDate(nextDate.getDate() + 1);
         const nextDateStr = `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}-${nextDate.getDate().toString().padStart(2, "0")}`;
         if (!assign[m.staff_name][nextDateStr]) {
-          assign[m.staff_name][nextDateStr] = akePatternKey;
+          const nextDayNum = day + 1;
+          if (nextDayNum >= 1 && nextDayNum <= daysCount) {
+            applyAssign(m, nextDateStr, nextDayNum, akePatternKey);
+          } else {
+            assign[m.staff_name][nextDateStr] = akePatternKey;
+          }
         }
       }
     }
@@ -171,8 +222,6 @@ export class ShiftEngine {
       }
     }
 
-    const shuffle = <T,>(arr: T[]): T[] => arr.slice().sort(() => Math.random() - 0.5);
-
     const canDoPattern = (m: StaffMasterProfile, patternId: number | undefined) => {
       if (!patternId) return true; // IDが解決できない場合は制限しない
       return Array.isArray(m.work_patterns) && m.work_patterns.includes(patternId);
@@ -184,17 +233,37 @@ export class ShiftEngine {
 
       const isAlreadyFilled = (m: StaffMasterProfile) => !!assign[m.staff_name]?.[dateStr];
 
-      const earlyCandidates = _members.filter((m) => !isAlreadyFilled(m) && canDoPattern(m, earlyPatternId));
-      const lateCandidates = _members.filter((m) => !isAlreadyFilled(m) && canDoPattern(m, latePatternId));
+      const weekend = isWeekendDay(day);
 
-      for (const m of shuffle(earlyCandidates).slice(0, 2)) {
-        assign[m.staff_name][dateStr] = earlyPatternKey;
+      const earlyCandidates = _members.filter((m) => {
+        if (isAlreadyFilled(m)) return false;
+        if (!canDoPattern(m, earlyPatternId)) return false;
+        if (weekend && isAdminStaff(m)) return false; // 管理者は土日なし
+        return true;
+      });
+
+      for (const m of pickLeast({
+        candidates: earlyCandidates,
+        count: 2,
+        score: (m) => (weekend ? (weekendWorkCount[m.staff_name] ?? 0) : 0),
+      })) {
+        applyAssign(m, dateStr, day, earlyPatternKey);
       }
 
       // 早番割当後に再評価
-      const lateCandidatesAfterEarly = _members.filter((m) => !isAlreadyFilled(m) && canDoPattern(m, latePatternId));
-      for (const m of shuffle(lateCandidatesAfterEarly).slice(0, 2)) {
-        assign[m.staff_name][dateStr] = latePatternKey;
+      const lateCandidatesAfterEarly = _members.filter((m) => {
+        if (isAlreadyFilled(m)) return false;
+        if (!canDoPattern(m, latePatternId)) return false;
+        if (weekend && isAdminStaff(m)) return false;
+        return true;
+      });
+
+      for (const m of pickLeast({
+        candidates: lateCandidatesAfterEarly,
+        count: 2,
+        score: (m) => (weekend ? (weekendWorkCount[m.staff_name] ?? 0) : 0),
+      })) {
+        applyAssign(m, dateStr, day, latePatternKey);
       }
     }
 
@@ -203,7 +272,12 @@ export class ShiftEngine {
       for (const day of dayList) {
         const dateStr = `${yearStr}-${monthStr}-${day.toString().padStart(2, "0")}`;
         if (assign[m.staff_name]?.[dateStr]) continue;
-        assign[m.staff_name][dateStr] = dayPatternKey;
+        // 管理者は土日勤務なし（空欄なら休にする）
+        if (isWeekendDay(day) && isAdminStaff(m)) {
+          applyAssign(m, dateStr, day, restPatternKey);
+          continue;
+        }
+        applyAssign(m, dateStr, day, dayPatternKey);
       }
     }
 
