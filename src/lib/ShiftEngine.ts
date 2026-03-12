@@ -3,7 +3,7 @@
  * React の State は含めず、計算結果のみを返す。
  */
 import { StaffManager, type StaffMasterProfile } from "./StaffManager";
-import type { ShiftRecordV2 } from "./ShiftRepository";
+import type { ShiftRecordV2 } from "@/lib/ShiftRepository";
 
 export type GeneratePhase1Input = {
   members: StaffMasterProfile[];
@@ -14,6 +14,11 @@ export type GeneratePhase1Input = {
   nightPatternKey: string;
   akePatternKey: string;
   restPatternKey: string;
+  earlyPatternId: number | undefined;
+  earlyPatternKey: string;
+  latePatternId: number | undefined;
+  latePatternKey: string;
+  dayPatternKey: string;
   updatedBy: string | null;
 };
 
@@ -38,6 +43,11 @@ export class ShiftEngine {
       nightPatternKey,
       akePatternKey,
       restPatternKey,
+      earlyPatternId,
+      earlyPatternKey,
+      latePatternId,
+      latePatternKey,
+      dayPatternKey,
       updatedBy,
     } = input;
 
@@ -148,6 +158,42 @@ export class ShiftEngine {
       const restAssignDays = availableDays.sort(() => Math.random() - 0.5).slice(0, quota);
       for (const dateStr of restAssignDays) {
         assign[m.staff_name][dateStr] = restPatternKey;
+      }
+    }
+
+    const shuffle = <T,>(arr: T[]): T[] => arr.slice().sort(() => Math.random() - 0.5);
+
+    const canDoPattern = (m: StaffMasterProfile, patternId: number | undefined) => {
+      if (!patternId) return true; // IDが解決できない場合は制限しない
+      return Array.isArray(m.work_patterns) && m.work_patterns.includes(patternId);
+    };
+
+    // ステップ3: 早番(2名) → 遅番(2名) を割当（空セルのみ）
+    for (const day of dayList) {
+      const dateStr = `${yearStr}-${monthStr}-${day.toString().padStart(2, "0")}`;
+
+      const isAlreadyFilled = (m: StaffMasterProfile) => !!assign[m.staff_name]?.[dateStr];
+
+      const earlyCandidates = _members.filter((m) => !isAlreadyFilled(m) && canDoPattern(m, earlyPatternId));
+      const lateCandidates = _members.filter((m) => !isAlreadyFilled(m) && canDoPattern(m, latePatternId));
+
+      for (const m of shuffle(earlyCandidates).slice(0, 2)) {
+        assign[m.staff_name][dateStr] = earlyPatternKey;
+      }
+
+      // 早番割当後に再評価
+      const lateCandidatesAfterEarly = _members.filter((m) => !isAlreadyFilled(m) && canDoPattern(m, latePatternId));
+      for (const m of shuffle(lateCandidatesAfterEarly).slice(0, 2)) {
+        assign[m.staff_name][dateStr] = latePatternKey;
+      }
+    }
+
+    // ステップ4: 残りの未入力セルをすべて「日勤」で埋める（既存入力は維持）
+    for (const m of _members) {
+      for (const day of dayList) {
+        const dateStr = `${yearStr}-${monthStr}-${day.toString().padStart(2, "0")}`;
+        if (assign[m.staff_name]?.[dateStr]) continue;
+        assign[m.staff_name][dateStr] = dayPatternKey;
       }
     }
 

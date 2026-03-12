@@ -423,6 +423,27 @@ export default function Home() {
   }, [allPatterns]);
   const restPatternKey = restPattern?.pattern_key ?? "休";
 
+  const earlyPattern = useMemo(() => {
+    return allPatterns.find((pt) => pt.pattern_key === "早" || pt.pattern_name.includes("早番"));
+  }, [allPatterns]);
+  const earlyPatternKey = earlyPattern?.pattern_key ?? "早";
+  const earlyPatternId = earlyPattern?.id;
+
+  const latePattern = useMemo(() => {
+    return allPatterns.find((pt) => pt.pattern_key === "遅" || pt.pattern_name.includes("遅番"));
+  }, [allPatterns]);
+  const latePatternKey = latePattern?.pattern_key ?? "遅";
+  const latePatternId = latePattern?.id;
+
+  const dayPattern = useMemo(() => {
+    return (
+      allPatterns.find((pt) => pt.pattern_key === "日勤") ||
+      allPatterns.find((pt) => pt.pattern_key === "日") ||
+      allPatterns.find((pt) => pt.pattern_name.includes("日勤"))
+    );
+  }, [allPatterns]);
+  const dayPatternKey = dayPattern?.pattern_key ?? "日勤";
+
   // --- 自動生成コア ---
   const generateShiftPhase1 = useCallback(async () => {
     setIsGeneratingShifts(true);
@@ -447,6 +468,11 @@ export default function Home() {
         nightPatternKey,
         akePatternKey,
         restPatternKey,
+        earlyPatternId,
+        earlyPatternKey,
+        latePatternId,
+        latePatternKey,
+        dayPatternKey,
         updatedBy: staffProfile?.staff_name ?? null,
       });
 
@@ -482,7 +508,72 @@ export default function Home() {
     } finally {
       setIsGeneratingShifts(false);
     }
-  }, [members, year, month, staffProfile?.staff_name, nightPatternId, nightPatternKey, akePatternKey, restPatternKey]);
+  }, [
+    members,
+    year,
+    month,
+    staffProfile?.staff_name,
+    nightPatternId,
+    nightPatternKey,
+    akePatternKey,
+    restPatternKey,
+    earlyPatternId,
+    earlyPatternKey,
+    latePatternId,
+    latePatternKey,
+    dayPatternKey,
+  ]);
+
+  const resetNonPinkCellsForDisplayedMonth = useCallback(async () => {
+    if (!isAdmin) return;
+    if (viewMode !== "plan") return;
+    const selfName = staffProfile?.staff_name;
+    if (!selfName) return;
+
+    const monthStr = month.toString().padStart(2, "0");
+    const ym = `${year}-${monthStr}`;
+
+    // ピンク判定（renderCell と同条件）
+    const isPink = (rec: ShiftRecordV2) => {
+      if (viewMode !== "plan") return false;
+      if (!isAdmin) return false;
+      if (!rec.shift_type) return false;
+      const updatedBy = rec.updated_by ?? null;
+      return updatedBy !== selfName; // null/空も含めてピンク扱い
+    };
+
+    const targets = shiftRecords.filter((rec) => {
+      if (rec.is_actual) return false; // planのみ
+      if (!rec.date.startsWith(ym)) return false; // 表示月のみ
+      if (!rec.shift_type) return false; // 既に空はスキップ
+      if (isPink(rec)) return false; // ピンクは保護
+      return true;
+    });
+
+    if (targets.length === 0) return;
+
+    if (!window.confirm(`表示月(${ym})のピンク以外のセルをリセットします。よろしいですか？`)) return;
+
+    const rows: ShiftRecordV2[] = targets.map((t) => ({
+      staff_name: t.staff_name,
+      date: t.date,
+      is_actual: false,
+      shift_type: null,
+      updated_by: selfName,
+    }));
+
+    await ShiftRepository.upsertShifts(rows);
+
+    setShiftRecords((prev) =>
+      prev.map((rec) => {
+        if (rec.is_actual) return rec;
+        if (!rec.date.startsWith(ym)) return rec;
+        const hit = rows.find((r) => r.staff_name === rec.staff_name && r.date === rec.date);
+        if (!hit) return rec;
+        return { ...rec, shift_type: null, updated_by: selfName };
+      })
+    );
+  }, [isAdmin, month, year, viewMode, staffProfile?.staff_name, shiftRecords]);
 
   const loggedInName = staffProfile?.staff_name;
 
@@ -816,6 +907,19 @@ export default function Home() {
                   ) : (
                     <span>自動作成（未入力のみ）</span>
                   )}
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="ml-2 px-4 py-1.5 rounded-lg font-bold text-xs bg-red-600 text-white hover:bg-red-700 shadow transition disabled:opacity-50"
+                  disabled={isGeneratingShifts || viewMode !== "plan"}
+                  onClick={async () => {
+                    if (isGeneratingShifts) return;
+                    await resetNonPinkCellsForDisplayedMonth();
+                  }}
+                >
+                  ピンク以外リセット
                 </button>
               )}
               {/* ---------- END: 自動作成ボタン ---------- */}
