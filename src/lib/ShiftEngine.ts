@@ -147,6 +147,16 @@ export class ShiftEngine {
       if (m.employment_status !== "常勤") continue;
       const quota = StaffManager.getHolidayQuota(year, month);
 
+      // 既に割り当て済み（事前入力＋夜勤/明け等）の公休数をカウントし、不足分だけ追加する
+      let currentRestCount = 0;
+      dayList.forEach((d) => {
+        const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
+        const shiftType = assign[m.staff_name]?.[dateStr];
+        if (shiftType === restPatternKey) currentRestCount++;
+      });
+      const remainingQuota = Math.max(0, quota - currentRestCount);
+      if (remainingQuota === 0) continue;
+
       const availableDays: string[] = [];
       dayList.forEach((d) => {
         const dateStr = `${yearStr}-${monthStr}-${d.toString().padStart(2, "0")}`;
@@ -155,7 +165,7 @@ export class ShiftEngine {
         availableDays.push(dateStr);
       });
 
-      const restAssignDays = availableDays.sort(() => Math.random() - 0.5).slice(0, quota);
+      const restAssignDays = availableDays.sort(() => Math.random() - 0.5).slice(0, remainingQuota);
       for (const dateStr of restAssignDays) {
         assign[m.staff_name][dateStr] = restPatternKey;
       }
