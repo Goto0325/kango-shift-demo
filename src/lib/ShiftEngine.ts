@@ -134,8 +134,8 @@ export class ShiftEngine {
         if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr]) return false;
-        // システム管理者は週末勤務なし（夜勤も週末には割り当てない）
-        if (isWeekendDay(day) && isAdminStaff(m)) return false;
+        // システム管理者は夜勤なし
+        if (isAdminStaff(m)) return false;
         return true;
       });
 
@@ -168,7 +168,7 @@ export class ShiftEngine {
         if (assign[m.staff_name]?.[prevDateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr]) return false;
-        if (isWeekendDay(day) && isAdminStaff(m)) return false;
+        if (isAdminStaff(m)) return false;
         return true;
       });
 
@@ -238,7 +238,7 @@ export class ShiftEngine {
       const earlyCandidates = _members.filter((m) => {
         if (isAlreadyFilled(m)) return false;
         if (!canDoPattern(m, earlyPatternId)) return false;
-        if (weekend && isAdminStaff(m)) return false; // 管理者は土日なし
+        if (isAdminStaff(m)) return false; // 管理者は早番なし
         return true;
       });
 
@@ -254,7 +254,7 @@ export class ShiftEngine {
       const lateCandidatesAfterEarly = _members.filter((m) => {
         if (isAlreadyFilled(m)) return false;
         if (!canDoPattern(m, latePatternId)) return false;
-        if (weekend && isAdminStaff(m)) return false;
+        if (isAdminStaff(m)) return false; // 管理者は遅番なし
         return true;
       });
 
