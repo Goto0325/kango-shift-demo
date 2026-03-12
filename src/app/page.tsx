@@ -853,21 +853,23 @@ export default function Home() {
   return (
     <div className="h-screen w-screen bg-slate-100 flex flex-col overflow-hidden text-black font-sans">
       {/* 1. ヘッダー */}
-      <div className="flex-none p-4 md:p-6 pb-2">
+      <div className="flex-none p-3 md:p-6 pb-2">
         <header className="flex flex-col gap-3">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-4">
             {/* 左側：タイトルとカレンダーコントロール */}
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
               <h1 className="text-xl font-black text-blue-900 tracking-tight">勤務表 Pro v2</h1>
               {/* ▼ ここが年月コントロール部 */}
-              <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 px-3 py-1 rounded-lg shadow-sm">
+              <div className="flex items-center justify-center gap-1 bg-slate-50 border border-slate-200 px-2 sm:px-3 py-1 rounded-lg shadow-sm w-full sm:w-auto">
                 <button
                   type="button"
                   onClick={handlePrevMonth}
                   className="p-1 px-2 text-[15px] font-bold text-blue-800 hover:bg-blue-100 rounded disabled:opacity-40"
                   aria-label="前の月へ"
                 >◀</button>
-                <span className="ml-1 mr-2 text-[18px] font-bold select-none" data-testid="current-year">{year}</span>
+                <span className="ml-1 mr-2 text-[18px] font-bold select-none" data-testid="current-year">
+                  {year}
+                </span>
                 <select
                   className="px-2 py-1 border rounded text-[15px] font-bold bg-white mr-1"
                   value={month}
@@ -891,7 +893,7 @@ export default function Home() {
               {isAdmin && (
                 <button
                   type="button"
-                  className="ml-3 px-4 py-1.5 rounded-lg font-bold text-xs bg-green-600 text-white hover:bg-green-700 shadow transition disabled:opacity-50"
+                  className="mt-2 sm:mt-0 sm:ml-3 px-4 py-1.5 rounded-lg font-bold text-xs bg-green-600 text-white hover:bg-green-700 shadow transition disabled:opacity-50"
                   disabled={isGeneratingShifts}
                   onClick={async () => {
                     if (isGeneratingShifts) return;
@@ -912,7 +914,7 @@ export default function Home() {
               {isAdmin && (
                 <button
                   type="button"
-                  className="ml-2 px-4 py-1.5 rounded-lg font-bold text-xs bg-red-600 text-white hover:bg-red-700 shadow transition disabled:opacity-50"
+                  className="mt-2 sm:mt-0 sm:ml-2 px-4 py-1.5 rounded-lg font-bold text-xs bg-red-600 text-white hover:bg-red-700 shadow transition disabled:opacity-50"
                   disabled={isGeneratingShifts || viewMode !== "plan"}
                   onClick={async () => {
                     if (isGeneratingShifts) return;
@@ -925,41 +927,40 @@ export default function Home() {
               {/* ---------- END: 自動作成ボタン ---------- */}
             </div>
             {/* 右側：ユーザー情報や「予定」「実績」切替など */}
-            <div className="flex gap-2 items-center">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
               {loggedInName && (
-                <div className="flex flex-col items-end mr-2">
-                  <span className="text-sm text-blue-700 font-bold" title={loggedInName}>
+                <div className="flex items-center justify-end sm:justify-end mr-0 sm:mr-2">
+                  <span className="text-xs sm:text-sm text-blue-700 font-semibold truncate max-w-[220px]" title={loggedInName}>
                     {loggedInName}さん
                     {staffProfile?.department_id && Number(staffProfile.department_id) > 0 && (
-                      <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
-                        部署{staffProfile.department_id}
+                      <span className="ml-1 text-[10px] sm:text-xs text-blue-700">
+                        / 部署{staffProfile.department_id}
+                      </span>
+                    )}
+                    {loggedInJob && (
+                      <span className="ml-1 text-[10px] sm:text-xs text-gray-700">
+                        / {loggedInJob}
                       </span>
                     )}
                   </span>
-                  <span className="text-xs text-gray-700 font-normal">
-                    {loggedInJob} {loggedInPatterns ? `(${loggedInPatterns})` : ""}
-                  </span>
-                  {typeof paidLeave === "number" && (
-                    <span className="text-xs text-pink-600 font-bold">
-                      有給残: {paidLeave}
-                    </span>
-                  )}
                 </div>
               )}
-              <button
-                onClick={() => setViewMode("plan")}
-                className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow-lg" : "bg-white border"}`}
-              >予定</button>
-              <button
-                onClick={() => setViewMode("actual")}
-                className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}
-              >実績</button>
+              <div className="flex gap-2 mt-1 sm:mt-0">
+                <button
+                  onClick={() => setViewMode("plan")}
+                  className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "plan" ? "bg-blue-600 text-white shadow-lg" : "bg-white border"}`}
+                >予定</button>
+                <button
+                  onClick={() => setViewMode("actual")}
+                  className={`px-4 py-1.5 rounded-lg font-bold text-xs transition ${viewMode === "actual" ? "bg-orange-600 text-white shadow-lg" : "bg-white border"}`}
+                >実績</button>
+              </div>
             </div>
           </div>
         </header>
       </div>
       <div className="flex-1 overflow-hidden px-2 md:px-6 pb-4">
-        <div className="h-full w-full overflow-auto border rounded-xl shadow-2xl bg-white relative border-separate">
+        <div className="h-full w-full overflow-x-auto overflow-y-hidden md:overflow-auto border rounded-xl shadow-2xl bg-white relative border-separate">
           {/* ローディング表示 */}
           {isGeneratingShifts && (
             <div className="absolute inset-0 z-[120] bg-white/80 flex items-center justify-center">
@@ -972,7 +973,7 @@ export default function Home() {
           <table className="border-separate border-spacing-0 min-w-full">
             <thead className="sticky top-0 z-[100]">
               <tr className="text-white text-[10px] text-center font-bold">
-                <th className="sticky left-0 top-0 z-[110] bg-slate-900 p-3 min-w-[140px] border-b border-r border-slate-700">
+                <th className="sticky left-0 top-0 z-[110] bg-slate-900 p-3 min-w-[120px] md:min-w-[140px] border-b border-r border-slate-700">
                   職員名 / 職種
                 </th>
                 <th className="bg-slate-900 border-b border-r border-slate-700 min-w-[50px] text-blue-200">公休</th>
