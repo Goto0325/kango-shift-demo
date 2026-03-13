@@ -1,5 +1,5 @@
 /**
- * シフト自動作成アルゴリズム（Phase1）を純粋計算としてクラス化。
+ * シフト自動作成アルゴリズム（Phase1）を純粋計算としてクラス化。  
  * React の State は含めず、計算結果のみを返す。
  */
 import { StaffManager, type StaffMasterProfile } from "./StaffManager";
