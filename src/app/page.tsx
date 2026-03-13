@@ -460,6 +460,20 @@ export default function Home() {
         staffNames,
       });
 
+      // 下記で非常勤には自動で日勤が入らないようにフィルタする
+      // employment_statusが"常勤"以外だったら、自動生成時に日勤(dayPatternKey)を割り当てしないよう特殊処理
+      // generateShiftPhase1実行時、渡すmembersを個別に加工
+
+      // 新たに加工したmembersリストを使う（各メンバーが常勤でなければ割り当て可能パターン内から日勤を除く）
+      // ここではメンバーには日勤を割り当てうるIDを除外したプロファイルを渡す
+
+      // patternsForMemberマップ作成：StaffMasterProfile.id -> 配列
+      // ※生成エンジン側で対応するならShiftEngine.generateShiftPhase1を修正 required
+      // ここでは元membersはそのまま渡し、engine内部またはupsertRows生成段階で日勤除外する形にします
+
+      // 1: ShiftEngine.generateShiftPhase1に追加オプション追加(あり得るIDを除く方式)
+      // 2: ただし変更コストを下げるには、生成後にupsertRowsから非常勤メンバーの日勤のみを削除するのが簡単
+
       const result = ShiftEngine.generateShiftPhase1({
         members,
         year,
@@ -479,9 +493,27 @@ export default function Home() {
 
       if (!result) return;
 
-      const { upsertRows, existedShifts: existed, readonlyShiftMap } = result;
+      let { upsertRows, existedShifts: existed, readonlyShiftMap } = result;
       const yearStr = year;
       const monthStr = month.toString().padStart(2, "0");
+
+      // === ここで upsertRows から非常勤に自動で日勤("日勤" or dayPatternKey)を割り当てない ===
+      upsertRows = upsertRows.filter(row => {
+        // 該当メンバー取得（staff_name一致で検索・なければ通過）
+        const member = members.find(m => m.staff_name === row.staff_name);
+        if (!member) return true;
+        // 非常勤なら日勤は割り当てNG
+        // employment_status: "常勤"以外なら日勤を除外
+        let status = member.employment_status;
+        // サーバー既存データ対策
+        if (typeof status !== "string") status = undefined;
+        // 日勤の判定はkey一致または"日勤"で
+        const isDayShift = row.shift_type === dayPatternKey || row.shift_type === "日勤";
+        if (status !== "常勤" && isDayShift) {
+          return false;
+        }
+        return true;
+      });
 
       if (upsertRows.length > 0) {
         await ShiftRepository.upsertShifts(upsertRows);
