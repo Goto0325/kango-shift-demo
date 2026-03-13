@@ -13,7 +13,7 @@ export default function Home() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
-  
+
   const handlePrevMonth = useCallback(() => {
     setMonth(prevMonth => {
       if (prevMonth === 1) {
@@ -857,15 +857,28 @@ export default function Home() {
 
     // 1. 管理者かどうか
     const admin = isAdmin && staffProfile;
+
     // 2. 並び替え
+    // (非常勤は各カテゴリの末尾にする)
     arr = arr.sort((a, b) => {
-      // 0:システム管理者 1:看護師 2:介護士/助手 9:その他
+      // 職種カテゴリ
       const catA = StaffManager.jobTitleCategory(a.job_title);
       const catB = StaffManager.jobTitleCategory(b.job_title);
+
       if (catA !== catB) return catA - catB;
-      // 同じ職種カテゴリ内で staff_name 五十音順
+
+      // employment_statusが"常勤"なら0, そうでなければ1（非常勤が下）
+      const getEmpStatusOrder = (emp: string | undefined) => emp === "常勤" ? 0 : 1;
+      const aEmp = typeof a.employment_status === "string" ? a.employment_status : undefined;
+      const bEmp = typeof b.employment_status === "string" ? b.employment_status : undefined;
+      const empOrderA = getEmpStatusOrder(aEmp);
+      const empOrderB = getEmpStatusOrder(bEmp);
+      if (empOrderA !== empOrderB) return empOrderA - empOrderB;
+
+      // 同じカテゴリ内で staff_name 五十音順
       const keyA = (a.staff_name || "").localeCompare(b.staff_name || "", "ja");
       if (keyA !== 0) return keyA;
+
       // 更に表示名で微ソート（不要だが保険）
       return (StaffManager.jobTitleKey(a.job_title) || "").localeCompare(StaffManager.jobTitleKey(b.job_title) || "", "ja");
     });
