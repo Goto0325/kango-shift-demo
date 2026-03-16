@@ -1,14 +1,20 @@
 "use client";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export default function SettingsPage() {
+  const router = useRouter();
+
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">管理者設定（師長用）</h1>
-        <Link href="/" className="text-blue-600 hover:underline">
+        <button
+          type="button"
+          className="text-blue-600 hover:underline"
+          onClick={() => router.back()}
+        >
           ← 勤務表に戻る
-        </Link>
+        </button>
       </div>
 
       <div className="grid gap-6">
