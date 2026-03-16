@@ -4,6 +4,8 @@ import { StaffManager, type StaffMasterProfile, type ShiftPattern } from '@/lib/
 import { ShiftRepository, type ShiftRecordV2 } from '../lib/ShiftRepository';
 import { ShiftEngine } from '@/lib/ShiftEngine';
 import { supabase } from '../../lib/supabase';
+// 追加: 設定ページへのリンク
+import Link from 'next/link';
 
 const MONTH_NAMES = [
   "", "1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"
@@ -905,6 +907,19 @@ export default function Home() {
             {/* 左側：タイトルとカレンダーコントロール */}
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
               <h1 className="text-xl font-black text-blue-900 tracking-tight">勤務表 Pro v2</h1>
+
+              {/* ---------- システム管理者のみ「設定」ボタン表示 ---------- */}
+              {isAdmin && (
+                <Link
+                  href="/settings"
+                  className="px-4 py-1.5 rounded-lg font-bold text-xs bg-gray-700 text-white hover:bg-gray-900 shadow transition ml-0 sm:ml-2"
+                  style={{ display: 'inline-block' }}
+                >
+                  設定
+                </Link>
+              )}
+              {/* ▲「設定」ボタンここまで */}
+
               {/* ▼ ここが年月コントロール部 */}
               <div className="flex items-center justify-center gap-1 bg-slate-50 border border-slate-200 px-2 sm:px-3 py-1 rounded-lg shadow-sm w-full sm:w-auto">
                 <button
