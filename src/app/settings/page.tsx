@@ -1,49 +1,79 @@
 "use client";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useState } from "react";
+
+// 将来的にはDBや共通のStateから取得しますが、まずは表示用のダミーデータ
+const initialStaffs = [
+  { id: "1", name: "看護 太郎", rank: "A", position: "師長", ngPairs: [] },
+  { id: "2", name: "医療 花子", rank: "B", position: "副主任", ngPairs: [] },
+  { id: "3", name: "岡崎 一郎", rank: "C", position: "一般", ngPairs: [] },
+];
 
 export default function SettingsPage() {
-  const router = useRouter();
+  const [staffs, setStaffs] = useState(initialStaffs);
 
   return (
-    <div className="p-4 md:p-8 max-w-4xl mx-auto">
+    <div className="p-4 md:p-8 max-w-5xl mx-auto bg-gray-50 min-h-screen">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">管理者設定（師長用）</h1>
-        <button
-          type="button"
-          className="text-blue-600 hover:underline"
-          onClick={() => router.back()}
-        >
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">管理者設定</h1>
+          <p className="text-sm text-gray-500">職員の属性や制約条件を編集します</p>
+        </div>
+        <Link href="/" className="bg-white border border-gray-300 px-4 py-2 rounded shadow-sm hover:bg-gray-50 transition">
           ← 勤務表に戻る
-        </button>
+        </Link>
       </div>
 
-      <div className="grid gap-6">
-        {/* 職員属性の設定 */}
-        <section className="border p-4 rounded-lg shadow-sm bg-white">
-          <h2 className="text-lg font-semibold mb-3 border-b pb-2">👥 職員ランク・役職設定</h2>
-          <p className="text-sm text-gray-500 mb-4">各職員のランク（A/B/C）や役職を設定します。</p>
-          <div className="h-20 bg-gray-50 flex items-center justify-center border-dashed border-2 rounded">
-             ここに職員一覧リストが入る予定
-          </div>
-        </section>
+      {/* 職員一覧テーブル */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-8">
+        <div className="p-4 border-b bg-gray-50">
+          <h2 className="font-semibold">👥 職員属性・ルール設定</h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-100 text-sm">
+                <th className="p-3 border-b font-bold w-1/4">職員名</th>
+                <th className="p-3 border-b font-bold w-1/5">ランク</th>
+                <th className="p-3 border-b font-bold w-1/5">役職</th>
+                <th className="p-3 border-b font-bold">NGペア設定</th>
+              </tr>
+            </thead>
+            <tbody>
+              {staffs.map((staff) => (
+                <tr key={staff.id} className="hover:bg-gray-50 transition">
+                  <td className="p-3 border-b font-medium">{staff.name}</td>
+                  <td className="p-3 border-b">
+                    <select className="border rounded p-1 w-full bg-white">
+                      <option value="A">ランクA</option>
+                      <option value="B">ランクB</option>
+                      <option value="C">ランクC</option>
+                    </select>
+                  </td>
+                  <td className="p-3 border-b">
+                    <select className="border rounded p-1 w-full bg-white">
+                      <option value="師長">師長</option>
+                      <option value="副主任">副主任</option>
+                      <option value="一般">一般</option>
+                    </select>
+                  </td>
+                  <td className="p-3 border-b">
+                    <button className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-200 hover:bg-blue-100">
+                      ＋ ペアを追加
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-        {/* NGペアの設定 */}
-        <section className="border p-4 rounded-lg shadow-sm bg-white">
-          <h2 className="text-lg font-semibold mb-3 border-b pb-2">🚫 NGペア設定</h2>
-          <p className="text-sm text-gray-500 mb-4">同じ日に配置したくない組み合わせを指定します。</p>
-          <div className="h-20 bg-gray-50 flex items-center justify-center border-dashed border-2 rounded">
-             ここにペア選択UIが入る予定
-          </div>
-        </section>
-
-        {/* 勤務ルールの設定 */}
-        <section className="border p-4 rounded-lg shadow-sm bg-white">
-          <h2 className="text-lg font-semibold mb-3 border-b pb-2">📅 勤務ルール・回数設定</h2>
-          <p className="text-sm text-gray-500 mb-4">夜勤回数や土日の出勤ルールの重みを設定します。</p>
-          <div className="h-20 bg-gray-50 flex items-center justify-center border-dashed border-2 rounded">
-             ここに数値設定項目が入る予定
-          </div>
-        </section>
+      {/* 保存ボタン（フッター固定などのイメージ） */}
+      <div className="flex justify-end">
+        <button className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg hover:bg-blue-700 transition">
+          設定を保存する
+        </button>
       </div>
     </div>
   );
