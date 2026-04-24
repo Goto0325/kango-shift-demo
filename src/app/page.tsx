@@ -514,6 +514,7 @@ export default function Home() {
 
       const result = ShiftEngine.generateShiftPhase1({
         members,
+        departmentId,
         year,
         month,
         existedShifts,
@@ -581,6 +582,7 @@ export default function Home() {
     }
   }, [
     members,
+    departmentId,
     year,
     month,
     staffProfile?.staff_name,

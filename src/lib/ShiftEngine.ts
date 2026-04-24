@@ -8,6 +8,7 @@ import { validateWorkConfigForAssignment } from "./WorkConfig";
 
 export type GeneratePhase1Input = {
   members: StaffMasterProfile[];
+  departmentId?: number | string | null;
   year: number;
   month: number;
   existedShifts: ShiftRecordV2[];
@@ -37,6 +38,7 @@ export class ShiftEngine {
   static generateShiftPhase1(input: GeneratePhase1Input): GeneratePhase1Result | null {
     const {
       members,
+      departmentId,
       year,
       month,
       existedShifts,
@@ -54,6 +56,10 @@ export class ShiftEngine {
 
     const _members = [...members];
     if (!_members.length) return null;
+    const normalizedDepartmentId = Number(departmentId);
+    const isDept34 = normalizedDepartmentId === 3 || normalizedDepartmentId === 4;
+    const nightNurseCount = isDept34 ? 1 : 2; // default: 2
+    const nightCareCount = isDept34 ? 2 : 1; // default: 1
 
     const yearStr = year;
     const monthStr = month.toString().padStart(2, "0");
@@ -153,7 +159,7 @@ export class ShiftEngine {
 
       const pickNurse = pickLeast({
         candidates: candidatesNurse,
-        count: 2,
+        count: nightNurseCount,
         score: (m) => nightCount[m.staff_name] ?? 0,
       });
       for (const m of pickNurse) {
@@ -187,7 +193,7 @@ export class ShiftEngine {
 
       const pickCare = pickLeast({
         candidates: candidatesCare,
-        count: 1,
+        count: nightCareCount,
         score: (m) => nightCount[m.staff_name] ?? 0,
       });
       for (const m of pickCare) {
