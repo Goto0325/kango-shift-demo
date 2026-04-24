@@ -8,6 +8,7 @@ export type StaffMasterProfile = {
   job_title: string | object | null;
   department_id: number | string | null;
   work_patterns: number[] | null;
+  work_config?: import("./WorkConfig").StaffWorkConfig | null;
   paid_leave_remaining: number | null;
   employment_status?: string;
 };

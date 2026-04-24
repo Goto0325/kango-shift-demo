@@ -4,6 +4,7 @@
  */
 import { StaffManager, type StaffMasterProfile } from "./StaffManager";
 import type { ShiftRecordV2 } from "@/lib/ShiftRepository";
+import { validateWorkConfigForAssignment } from "./WorkConfig";
 
 export type GeneratePhase1Input = {
   members: StaffMasterProfile[];
@@ -119,6 +120,16 @@ export class ShiftEngine {
       if (isWeekendDay(dayNum) && !StaffManager.isRestishValue(v)) weekendWorkCount[m.staff_name] += 1;
     };
 
+    const canAssignByWorkConfig = (m: StaffMasterProfile, dateStr: string, shiftType: string) => {
+      const violation = validateWorkConfigForAssignment({
+        config: m.work_config ?? null,
+        date: dateStr,
+        nextShift: shiftType,
+        scheduleByDate: assign[m.staff_name] ?? {},
+      });
+      return !violation;
+    };
+
     // ステップ1: 夜勤配置（空セルのみ割当）
     for (const day of dayList) {
       const dateStr = `${yearStr}-${monthStr}-${day.toString().padStart(2, "0")}`;
@@ -136,6 +147,7 @@ export class ShiftEngine {
         if (assign[m.staff_name]?.[dateStr]) return false;
         // システム管理者は夜勤なし
         if (isAdminStaff(m)) return false;
+        if (!canAssignByWorkConfig(m, dateStr, nightPatternKey)) return false;
         return true;
       });
 
@@ -169,6 +181,7 @@ export class ShiftEngine {
         if (assign[m.staff_name]?.[dateStr] === nightPatternKey) return false;
         if (assign[m.staff_name]?.[dateStr]) return false;
         if (isAdminStaff(m)) return false;
+        if (!canAssignByWorkConfig(m, dateStr, nightPatternKey)) return false;
         return true;
       });
 
@@ -241,6 +254,7 @@ export class ShiftEngine {
         if (isAlreadyFilled(m)) return false;
         if (!canDoPattern(m, earlyPatternId)) return false;
         if (isAdminStaff(m)) return false; // 管理者は早番なし
+        if (!canAssignByWorkConfig(m, dateStr, earlyPatternKey)) return false;
         return true;
       });
 
@@ -257,6 +271,7 @@ export class ShiftEngine {
         if (isAlreadyFilled(m)) return false;
         if (!canDoPattern(m, latePatternId)) return false;
         if (isAdminStaff(m)) return false; // 管理者は遅番なし
+        if (!canAssignByWorkConfig(m, dateStr, latePatternKey)) return false;
         return true;
       });
 
@@ -276,6 +291,10 @@ export class ShiftEngine {
         if (assign[m.staff_name]?.[dateStr]) continue;
         // 管理者は土日勤務なし（空欄なら休にする）
         if (isWeekendDay(day) && isAdminStaff(m)) {
+          applyAssign(m, dateStr, day, restPatternKey);
+          continue;
+        }
+        if (!canAssignByWorkConfig(m, dateStr, dayPatternKey)) {
           applyAssign(m, dateStr, day, restPatternKey);
           continue;
         }

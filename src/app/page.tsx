@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { StaffManager, type StaffMasterProfile, type ShiftPattern } from '@/lib/StaffManager';
 import { ShiftRepository, type ShiftRecordV2 } from '../lib/ShiftRepository';
 import { ShiftEngine } from '@/lib/ShiftEngine';
+import { parseWorkConfig, validateWorkConfigForAssignment } from '@/lib/WorkConfig';
 import { supabase } from '../../lib/supabase';
 // 追加: 設定ページへのリンク
 import Link from 'next/link';
@@ -88,6 +89,7 @@ export default function Home() {
       setStaffProfile({
         ...data,
         work_patterns: safeParseIntArray((data as any).work_patterns),
+        work_config: parseWorkConfig((data as any).work_config),
       });
       setDepartmentId((data as any).department_id ?? null);
     };
@@ -118,6 +120,7 @@ export default function Home() {
           let membersArr = [...(data as any[])].map((row: any) => ({
             ...row,
             work_patterns: safeParseIntArray(row.work_patterns),
+            work_config: parseWorkConfig(row.work_config),
             employment_status: (row as any).employment_status ?? undefined,
           }));
           if (staffProfile) {
@@ -263,6 +266,24 @@ export default function Home() {
       }
       const newShiftType = value === "" ? null : value;
       const is_actual = viewMode === "actual";
+      const scheduleByDate: Record<string, string | null | undefined> = {};
+      for (const rec of shiftRecords) {
+        if (rec.is_actual !== is_actual) continue;
+        if (rec.staff_name !== staff_name) continue;
+        scheduleByDate[rec.date] = rec.shift_type;
+      }
+      const validation = validateWorkConfigForAssignment({
+        config: profile.work_config ?? null,
+        date,
+        nextShift: newShiftType,
+        scheduleByDate,
+      });
+      if (validation) {
+        setIsSaving(false);
+        alert(`${staff_name}: ${validation.message}`);
+        setEditingShift(null);
+        return;
+      }
 
       // --- 夜勤＆明け パターンキー特定 ---
       const nightPatternKey = (() => {
@@ -307,6 +328,21 @@ export default function Home() {
         const mm2 = (currentDate.getMonth() + 1).toString().padStart(2, "0");
         const dd2 = currentDate.getDate().toString().padStart(2, "0");
         nextDayISO = `${yyyy2}-${mm2}-${dd2}`;
+        const nextDayValidation = validateWorkConfigForAssignment({
+          config: profile.work_config ?? null,
+          date: nextDayISO,
+          nextShift: akePatternKey,
+          scheduleByDate: {
+            ...scheduleByDate,
+            [date]: nightPatternKey,
+          },
+        });
+        if (nextDayValidation) {
+          setIsSaving(false);
+          alert(`${staff_name}: ${nextDayValidation.message}`);
+          setEditingShift(null);
+          return;
+        }
         // Save for "明"
         upsertRows.push({
           staff_name,
@@ -391,7 +427,7 @@ export default function Home() {
       }
       setEditingShift(null);
     },
-    [viewMode, departmentId, allPatterns, canEdit, members, staffProfile?.staff_name]
+    [viewMode, departmentId, allPatterns, canEdit, members, staffProfile?.staff_name, shiftRecords]
   );
 
   // ==== 追加: 自動シフト生成ロジック ====
