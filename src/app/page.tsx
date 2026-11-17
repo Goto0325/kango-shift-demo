@@ -949,7 +949,7 @@ export default function Home() {
               {/* ---------- システム管理者のみ「設定」ボタン表示 ---------- */}
               {isAdmin && (
                 <Link
-                  href="/settings"
+                  href={accessToken ? `/settings?key=${encodeURIComponent(accessToken)}` : "/settings"}
                   className="px-4 py-1.5 rounded-lg font-bold text-xs bg-gray-700 text-white hover:bg-gray-900 shadow transition ml-0 sm:ml-2"
                   style={{ display: 'inline-block' }}
                 >
